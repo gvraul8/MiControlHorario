@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Switch, ScrollView } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { BarChart } from 'react-native-chart-kit';
+import { LineChart, PieChart } from 'react-native-chart-kit';
 
 interface WorkEntry {
   job: string;
@@ -60,6 +60,11 @@ export default function StatsScreen() {
   // Cambia el tab por defecto a 'monthly'
   const [selectedTab, setSelectedTab] = useState<'weekly' | 'daily' | 'monthly' | 'byJob'>('monthly');
   const [currentMonthKey, setCurrentMonthKey] = useState(getCurrentMonthKey());
+
+  // New state for UI controls
+  const [showMoney, setShowMoney] = useState(true); // Toggle for money/work
+  const [orderBy, setOrderBy] = useState<'date' | 'money' | 'hours'>('date');
+  const [orderAsc, setOrderAsc] = useState(false);
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -122,10 +127,23 @@ export default function StatsScreen() {
     sectionTitle = 'Totales diarios';
   } else if (selectedTab === 'byJob') {
     data = Object.entries(totals.byJob);
-    sectionTitle = 'Totales por +';
+    sectionTitle = 'Totales por trabajo';
+  }
+
+  // For daily summary below the graph
+  let dailyData: [string, Totals][] = Object.entries(totals.daily);
+  // Filtering and ordering
+  if (orderBy === 'money') {
+    dailyData = dailyData.sort((a, b) => orderAsc ? a[1].money - b[1].money : b[1].money - a[1].money);
+  } else if (orderBy === 'hours') {
+    dailyData = dailyData.sort((a, b) => orderAsc ? a[1].hours - b[1].hours : b[1].hours - a[1].hours);
+  } else {
+    dailyData = dailyData.sort((a, b) => orderAsc ? a[0].localeCompare(b[0]) : b[0].localeCompare(a[0]));
   }
 
   const screenWidth = Dimensions.get('window').width - 40;
+  const screenHeight = Dimensions.get('window').height;
+  const chartHeight = Math.floor(screenHeight * 0.4); // 40% of screen
 
   // Selecciona el periodo según el tab activo
   const period: 'daily' | 'weekly' | 'monthly' =
@@ -167,8 +185,8 @@ export default function StatsScreen() {
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Estadísticas de Ganancias</Text>
+    <ScrollView style={styles.container}>
+      <Text style={styles.title}>Estadísticas</Text>
       <View style={styles.tabs}>
         {TABS.map(tab => (
           <TouchableOpacity
@@ -188,76 +206,104 @@ export default function StatsScreen() {
           </TouchableOpacity>
         ))}
       </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
+        <Text style={{ marginRight: 8, color: showMoney ? '#2563eb' : '#10b981', fontWeight: 'bold' }}>{showMoney ? 'Dinero' : 'Horas'}</Text>
+        <Switch
+          value={showMoney}
+          onValueChange={setShowMoney}
+          thumbColor={showMoney ? '#2563eb' : '#10b981'}
+          trackColor={{ false: '#a7f3d0', true: '#93c5fd' }}
+        />
+      </View>
       <Text style={styles.sectionTitle}>{sectionTitle}</Text>
 
-      {/* Gráfico de barras */}
-      {data.length > 0 && (
-        <BarChart
+      {/* LineChart for time series (monthly, weekly, daily) */}
+      {['monthly', 'weekly', 'daily'].includes(selectedTab) && data.length > 0 && (
+        <LineChart
           data={{
-            labels: data.map(([key]) => key.length > 6 ? key.slice(-5) : key), // etiquetas cortas
-            datasets: [{ data: data.map(([, value]) => value.money) }]
+            labels: data.map(([key]) => key.length > 6 ? key.slice(-5) : key),
+            datasets: [{ data: data.map(([, value]) => showMoney ? value.money : value.hours) }]
           }}
           width={screenWidth}
-          height={180}
-          yAxisLabel="€"
-          yAxisSuffix=""
+          height={chartHeight}
+          yAxisLabel={showMoney ? '€' : ''}
+          yAxisSuffix={showMoney ? '' : 'h'}
           chartConfig={{
-            backgroundColor: "#f9fafb",
-            backgroundGradientFrom: "#f9fafb",
-            backgroundGradientTo: "#f9fafb",
-            decimalPlaces: 2,
+            backgroundColor: '#f9fafb',
+            backgroundGradientFrom: '#f9fafb',
+            backgroundGradientTo: '#f9fafb',
+            decimalPlaces: showMoney ? 2 : 1,
+            color: (opacity = 1) => showMoney ? `rgba(37, 99, 235, ${opacity})` : `rgba(16, 185, 129, ${opacity})`,
+            labelColor: (opacity = 1) => `rgba(55, 65, 81, ${opacity})`,
+            style: { borderRadius: 8 },
+            propsForDots: { r: '6', strokeWidth: '2', stroke: showMoney ? '#2563eb' : '#10b981' }
+          }}
+          style={{ marginVertical: 8, borderRadius: 8 }}
+          fromZero
+        />
+      )}
+
+      {/* PieChart for job distribution */}
+      {selectedTab === 'byJob' && data.length > 0 && (
+        <PieChart
+          data={data.map(([key, value], i) => ({
+            name: key,
+            population: showMoney ? value.money : value.hours,
+            color: ['#2563eb', '#10b981', '#6366f1', '#f59e42', '#ef4444', '#fbbf24', '#a3e635', '#f472b6'][i % 8],
+            legendFontColor: '#374151',
+            legendFontSize: 14
+          }))}
+          width={screenWidth}
+          height={chartHeight}
+          chartConfig={{
+            backgroundColor: '#f9fafb',
+            backgroundGradientFrom: '#f9fafb',
+            backgroundGradientTo: '#f9fafb',
             color: (opacity = 1) => `rgba(37, 99, 235, ${opacity})`,
             labelColor: (opacity = 1) => `rgba(55, 65, 81, ${opacity})`,
-            style: { borderRadius: 8 },
-            propsForDots: { r: "6", strokeWidth: "2", stroke: "#2563eb" }
           }}
-          style={{ marginVertical: 8, borderRadius: 8 }}
-          fromZero
-          showValuesOnTopOfBars
+          accessor={'population'}
+          backgroundColor={'transparent'}
+          paddingLeft={'8'}
+          absolute
         />
       )}
 
-      {jobLabels.length > 0 && (
-        <BarChart
-          data={{
-            labels: jobLabels,
-            datasets: [{ data: jobData }]
-          }}
-          width={screenWidth}
-          height={180}
-          yAxisLabel=""
-          yAxisSuffix="h"
-          chartConfig={{
-            backgroundColor: "#f9fafb",
-            backgroundGradientFrom: "#f9fafb",
-            backgroundGradientTo: "#f9fafb",
-            decimalPlaces: 1,
-            color: (opacity = 1) => `rgba(16, 185, 129, ${opacity})`,
-            labelColor: (opacity = 1) => `rgba(55, 65, 81, ${opacity})`,
-            style: { borderRadius: 8 },
-            propsForDots: { r: "6", strokeWidth: "2", stroke: "#10b981" }
-          }}
-          style={{ marginVertical: 8, borderRadius: 8 }}
-          fromZero
-          showValuesOnTopOfBars
-        />
-      )}
+      {/* Filtros y orden para resumen diario */}
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginVertical: 8 }}>
+        <Text style={{ fontWeight: 'bold', color: '#2563eb' }}>Resumen diario</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity onPress={() => setOrderBy('date')} style={{ marginHorizontal: 4 }}>
+            <Text style={{ color: orderBy === 'date' ? '#2563eb' : '#888' }}>Fecha</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setOrderBy('money')} style={{ marginHorizontal: 4 }}>
+            <Text style={{ color: orderBy === 'money' ? '#2563eb' : '#888' }}>Dinero</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setOrderBy('hours')} style={{ marginHorizontal: 4 }}>
+            <Text style={{ color: orderBy === 'hours' ? '#2563eb' : '#888' }}>Horas</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setOrderAsc(a => !a)} style={{ marginHorizontal: 4 }}>
+            <Text style={{ color: '#2563eb' }}>{orderAsc ? '↑' : '↓'}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
 
-      <FlatList
-        data={data}
-        keyExtractor={([key]) => key}
-        renderItem={({ item }) => (
-          <View style={styles.item}>
-            <Text style={styles.job}>{item[0]}</Text>
-            <View>
-              <Text style={styles.amount}>{item[1].money.toFixed(2)} €</Text>
-              <Text style={styles.hours}>{item[1].hours.toFixed(2)} h</Text>
+      <ScrollView style={{ maxHeight: Math.floor(screenHeight * 0.5) }}>
+        {dailyData.length === 0 ? (
+          <Text style={{ color: '#888', textAlign: 'center' }}>Sin datos</Text>
+        ) : (
+          dailyData.map((item) => (
+            <View style={styles.item} key={item[0]}>
+              <Text style={styles.job}>{item[0]}</Text>
+              <View>
+                <Text style={styles.amount}>{item[1].money.toFixed(2)} €</Text>
+                <Text style={styles.hours}>{item[1].hours.toFixed(2)} h</Text>
+              </View>
             </View>
-          </View>
+          ))
         )}
-        ListEmptyComponent={<Text style={{ color: '#888', textAlign: 'center' }}>Sin datos</Text>}
-      />
-    </View>
+      </ScrollView>
+    </ScrollView>
   );
 }
 

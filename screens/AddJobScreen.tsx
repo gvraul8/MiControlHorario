@@ -1,24 +1,36 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, Button, FlatList } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { View, Text, TextInput, Button, FlatList, Alert } from 'react-native';
+import { collection, addDoc, getDocs } from 'firebase/firestore';
+import { db } from '../utils/firebaseConfig';
 
-const STORAGE_KEY = 'jobList';
 
 export default function AddJobScreen({ navigation }) {
   const [jobList, setJobList] = useState<string[]>([]);
   const [newJob, setNewJob] = useState('');
 
   const loadJobs = async () => {
-    const saved = await AsyncStorage.getItem(STORAGE_KEY);
-    if (saved) setJobList(JSON.parse(saved));
+    try {
+      const querySnapshot = await getDocs(collection(db, 'jobs'));
+      const jobs: string[] = [];
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data && data.name) jobs.push(data.name);
+      });
+      setJobList(jobs);
+    } catch (error) {
+      Alert.alert('Error', 'No se pudieron cargar los trabajos de Firebase.');
+    }
   };
 
   const saveJob = async () => {
     if (!newJob.trim()) return;
-    const updated = [...jobList, newJob.trim()];
-    setJobList(updated);
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    setNewJob('');
+    try {
+      await addDoc(collection(db, 'jobs'), { name: newJob.trim() });
+      setNewJob('');
+      loadJobs();
+    } catch (error) {
+      Alert.alert('Error', 'No se pudo guardar el trabajo en Firebase.');
+    }
   };
 
   useEffect(() => {
@@ -27,7 +39,7 @@ export default function AddJobScreen({ navigation }) {
 
   return (
     <View style={{ padding: 20, marginTop: 40 }}>
-      <Text style={{ fontSize: 18, marginBottom: 10 }}>Trabajos Guardados</Text>
+      <Text style={{ fontSize: 18, marginBottom: 10 }}>Trabajos Guardados (Firebase)</Text>
 
       <FlatList
         data={jobList}

@@ -1,4 +1,3 @@
-// HomeScreen.tsx
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -6,7 +5,6 @@ import {
   Modal,
   TextInput,
   Button,
-  FlatList,
   ScrollView,
   Alert,
   StyleSheet,
@@ -14,10 +12,8 @@ import {
 } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Print from 'expo-print';
-import * as Sharing from 'expo-sharing';
 import { Picker } from '@react-native-picker/picker';
-import { generateStyledPDF } from '../utils/generateStyledPDF'; // Asegúrate de tener este helper
+import { generateStyledPDF } from '../utils/generateStyledPDF';
 
 interface WorkEntry {
   job: string;
@@ -33,7 +29,14 @@ const STORAGE_KEYS = {
   JOB_LIST: 'jobListWithRates',
 };
 
-export default function HomeScreen() {
+import { useIsFocused } from '@react-navigation/native';
+
+export default function HomeScreen({ }) {
+
+  // Estado para el mes y año seleccionados en el calendario
+  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth());
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+
   const [selectedDate, setSelectedDate] = useState('');
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedJob, setSelectedJob] = useState('');
@@ -41,6 +44,20 @@ export default function HomeScreen() {
   const [entries, setEntries] = useState<Record<string, WorkEntry[]>>({});
   const [jobList, setJobList] = useState<Record<string, JobData>>({});
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+
+  // Calculate summary for selected month (after all state declarations)
+  const monthKey = `${selectedYear}-${(selectedMonth + 1).toString().padStart(2, '0')}`;
+  let monthHours = 0;
+  let monthMoney = 0;
+  Object.entries(entries).forEach(([date, dayEntries]) => {
+    if (date.startsWith(monthKey)) {
+      dayEntries.forEach(({ job, hours }) => {
+        monthHours += hours;
+        const rate = jobList[job]?.rate || 0;
+        monthMoney += hours * rate;
+      });
+    }
+  });
 
   const saveEntry = async () => {
     const parsedHours = parseFloat(hours);
@@ -89,9 +106,6 @@ export default function HomeScreen() {
     if (savedJobs) setJobList(JSON.parse(savedJobs));
   };
 
-  // Estado para el mes y año seleccionados en el calendario
-  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth());
-  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
 
   const handleGeneratePDF = async () => {
     try {
@@ -116,9 +130,12 @@ export default function HomeScreen() {
     setEditingIndex(index);
   };
 
+  const isFocused = useIsFocused();
   useEffect(() => {
-    loadData();
-  }, []);
+    if (isFocused) {
+      loadData();
+    }
+  }, [isFocused]);
 
   return (
     <ScrollView style={styles.container}>
@@ -147,6 +164,19 @@ export default function HomeScreen() {
 
       <View style={styles.buttonContainer}>
         <Button title="📄 Descargar PDF" onPress={handleGeneratePDF} color="#2563eb" />
+      </View>
+      <View style={{ height: 24 }} />
+      <View style={{
+        backgroundColor: '#e0ecff',
+        borderRadius: 10,
+        padding: 16,
+        marginBottom: 12,
+        alignItems: 'center',
+        elevation: 2,
+      }}>
+        <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#2563eb' }}>Resumen de {monthKey}</Text>
+        <Text style={{ fontSize: 18, color: '#10b981', fontWeight: 'bold', marginTop: 4 }}>{monthHours.toFixed(2)} h</Text>
+        <Text style={{ fontSize: 18, color: '#6366f1', fontWeight: 'bold' }}>{monthMoney.toFixed(2)} €</Text>
       </View>
 
       <Modal visible={modalVisible} animationType="slide">
@@ -180,11 +210,9 @@ export default function HomeScreen() {
           </View>
 
           <Text style={styles.label}>Entradas guardadas:</Text>
-          <FlatList
-            data={entries[selectedDate] || []}
-            keyExtractor={(_, index) => index.toString()}
-            renderItem={({ item, index }) => (
-              <View style={styles.entryRow}>
+          <ScrollView style={{ maxHeight: 200 }}>
+            {(entries[selectedDate] || []).map((item, index) => (
+              <View style={styles.entryRow} key={index}>
                 <Text style={styles.entryItem}>{item.job}: {item.hours}h</Text>
                 <View style={{ flexDirection: 'row' }}>
                   <TouchableOpacity onPress={() => startEditEntry(index)}>
@@ -195,8 +223,8 @@ export default function HomeScreen() {
                   </TouchableOpacity>
                 </View>
               </View>
-            )}
-          />
+            ))}
+          </ScrollView>
         </View>
       </Modal>
     </ScrollView>
