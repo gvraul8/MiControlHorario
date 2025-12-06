@@ -14,6 +14,7 @@ import { Calendar } from 'react-native-calendars';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Picker } from '@react-native-picker/picker';
 import { generateStyledPDF } from '../utils/generateStyledPDF';
+import { Ionicons } from '@expo/vector-icons';
 
 interface WorkEntry {
   job: string;
@@ -27,6 +28,7 @@ interface JobData {
 const STORAGE_KEYS = {
   WORK_ENTRIES: 'workEntries',
   JOB_LIST: 'jobListWithRates',
+  USER_NAME: 'userName',
 };
 
 import { useIsFocused } from '@react-navigation/native';
@@ -44,6 +46,8 @@ export default function HomeScreen({ }) {
   const [entries, setEntries] = useState<Record<string, WorkEntry[]>>({});
   const [jobList, setJobList] = useState<Record<string, JobData>>({});
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [userName, setUserName] = useState('');
+  const [isEditingName, setIsEditingName] = useState(false);
 
   // Calculate summary for selected month (after all state declarations)
   const monthKey = `${selectedYear}-${(selectedMonth + 1).toString().padStart(2, '0')}`;
@@ -104,12 +108,25 @@ export default function HomeScreen({ }) {
 
     const savedJobs = await AsyncStorage.getItem(STORAGE_KEYS.JOB_LIST);
     if (savedJobs) setJobList(JSON.parse(savedJobs));
+
+    const savedName = await AsyncStorage.getItem(STORAGE_KEYS.USER_NAME);
+    if (savedName) {
+      setUserName(savedName);
+      setIsEditingName(false);
+    } else {
+      setIsEditingName(true);
+    }
+  };
+
+  const saveUserName = async (name: string) => {
+    setUserName(name);
+    await AsyncStorage.setItem(STORAGE_KEYS.USER_NAME, name);
   };
 
 
   const handleGeneratePDF = async () => {
     try {
-      await generateStyledPDF(entries, selectedYear, selectedMonth);
+      await generateStyledPDF(entries, selectedYear, selectedMonth, userName);
     } catch (e) {
       Alert.alert('Error al generar PDF', String(e));
     }
@@ -139,6 +156,29 @@ export default function HomeScreen({ }) {
 
   return (
     <ScrollView style={styles.container}>
+      <View style={{ padding: 16, backgroundColor: '#fff', marginBottom: 10, borderRadius: 8 }}>
+        {isEditingName ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <TextInput
+              style={{ flex: 1, borderWidth: 1, borderColor: '#ccc', borderRadius: 4, padding: 8, marginRight: 10 }}
+              placeholder="Introduce tu nombre"
+              value={userName}
+              onChangeText={saveUserName}
+            />
+            <TouchableOpacity onPress={() => setIsEditingName(false)}>
+              <Ionicons name="checkmark-circle" size={28} color="#10b981" />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={{ fontSize: 18, fontWeight: 'bold' }}>Hola, {userName || 'Usuario'}</Text>
+            <TouchableOpacity onPress={() => setIsEditingName(true)}>
+              <Ionicons name="pencil" size={20} color="#2563eb" />
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+
       <Calendar
         onDayPress={(day) => {
           setSelectedDate(day.dateString);

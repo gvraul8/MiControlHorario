@@ -1,378 +1,597 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Switch, ScrollView } from 'react-native';
+import React, { useEffect, useState, useMemo } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Switch, Modal, Button, FlatList } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { LineChart, PieChart } from 'react-native-chart-kit';
+import { StackedBarChart, PieChart } from 'react-native-chart-kit';
+import { Calendar, DateData } from 'react-native-calendars';
 
+// --- INTERFACES ---
 interface WorkEntry {
   job: string;
   hours: number;
+  date: string; // Add date to the entry itself
 }
 
-interface JobData {
+interface JobInfo {
   rate: number;
+  color: string;
 }
 
-type Totals = {
-  money: number;
-  hours: number;
-};
-
-function getWeek(dateStr: string) {
-  const d = new Date(dateStr);
-  const onejan = new Date(d.getFullYear(), 0, 1);
+// --- DATE HELPERS ---
+function getWeek(date: Date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
   // @ts-ignore
-  return Math.ceil((((d - onejan) / 86400000) + onejan.getDay() + 1) / 7);
+  return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
 }
+
+const getStartOfWeek = (date: Date) => {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  return new Date(d.setDate(diff));
+};
 
 const TABS = [
   { key: 'weekly', label: 'Semana' },
-  { key: 'daily', label: 'Día' },
   { key: 'monthly', label: 'Mes' },
-  { key: 'byJob', label: 'Trabajo' },
+  { key: 'daily', label: 'Días' },
+  { key: 'byJob', label: 'Trabajos' },
 ];
 
-function getCurrentWeekKey() {
-  const today = new Date();
-  const year = today.getFullYear();
-  const week = getWeek(today.toISOString().slice(0, 10));
-  return `${year}-W${week}`;
-}
+const FILTER_MODES = [
+  { key: 'week', label: 'Semana' },
+  { key: 'month', label: 'Mes' },
+  { key: 'range', label: 'Rango' },
+];
 
-function getCurrentMonthKey() {
-  const today = new Date();
-  return today.toISOString().slice(0, 7); // "YYYY-MM"
-}
-
+// --- COMPONENT ---
 export default function StatsScreen() {
-  const [totals, setTotals] = useState<{
-    daily: Record<string, Totals>;
-    weekly: Record<string, Totals>;
-    monthly: Record<string, Totals>;
-    byJob: Record<string, Totals>;
-  }>({
-    daily: {},
-    weekly: {},
-    monthly: {},
-    byJob: {},
-  });
-  const [entries, setEntries] = useState<Record<string, WorkEntry[]>>({});
+  // --- STATE ---
+  const [selectedTab, setSelectedTab] = useState<'weekly' | 'monthly' | 'daily' | 'byJob'>('weekly');
+  const [displayMode, setDisplayMode] = useState<'hours' | 'money'>('hours');
+  const [filterMode, setFilterMode] = useState<'week' | 'month' | 'range'>('week');
+  
+  const [currentDate, setCurrentDate] = useState(new Date()); // For week/month navigation
+  const [dateRange, setDateRange] = useState<{ startDate: string, endDate: string }>({ startDate: '', endDate: '' });
+  
+  const [allEntries, setAllEntries] = useState<Record<string, WorkEntry[]>>({});
+  const [jobInfo, setJobInfo] = useState<Record<string, JobInfo>>({});
+  
+  const [isCalendarVisible, setCalendarVisible] = useState(false);
+  const [tempDateRange, setTempDateRange] = useState<{ startDate: string | null, endDate: string | null }>({ startDate: null, endDate: null });
+  const [markedDates, setMarkedDates] = useState({});
 
-  // Cambia el tab por defecto a 'monthly'
-  const [selectedTab, setSelectedTab] = useState<'weekly' | 'daily' | 'monthly' | 'byJob'>('monthly');
-  const [currentMonthKey, setCurrentMonthKey] = useState(getCurrentMonthKey());
-
-  // New state for UI controls
-  const [showMoney, setShowMoney] = useState(true); // Toggle for money/work
-  const [orderBy, setOrderBy] = useState<'date' | 'money' | 'hours'>('date');
-  const [orderAsc, setOrderAsc] = useState(false);
-
+  // --- DATA FETCHING ---
   useEffect(() => {
-    const fetchStats = async () => {
+    const fetchAndProcessData = async () => {
       const entriesRaw = await AsyncStorage.getItem('workEntries');
       const jobsRaw = await AsyncStorage.getItem('jobListWithRates');
       if (!entriesRaw || !jobsRaw) return;
 
       const entries: Record<string, WorkEntry[]> = JSON.parse(entriesRaw);
-      const jobList: Record<string, JobData> = JSON.parse(jobsRaw);
+      setAllEntries(entries);
 
-      const byJob: Record<string, Totals> = {};
-      const daily: Record<string, Totals> = {};
-      const weekly: Record<string, Totals> = {};
-      const monthly: Record<string, Totals> = {};
-
-      Object.entries(entries).forEach(([date, dayEntries]) => {
-        let dayTotal: Totals = { money: 0, hours: 0 };
-        dayEntries.forEach(({ job, hours }) => {
-          const rate = jobList[job]?.rate || 0;
-          dayTotal.money += hours * rate;
-          dayTotal.hours += hours;
-
-          // Por trabajo
-          if (!byJob[job]) byJob[job] = { money: 0, hours: 0 };
-          byJob[job].money += hours * rate;
-          byJob[job].hours += hours;
-        });
-        daily[date] = dayTotal;
-
-        // Semana y mes
-        const weekKey = `${date.slice(0, 4)}-W${getWeek(date)}`;
-        const monthKey = date.slice(0, 7);
-        if (!weekly[weekKey]) weekly[weekKey] = { money: 0, hours: 0 };
-        if (!monthly[monthKey]) monthly[monthKey] = { money: 0, hours: 0 };
-        weekly[weekKey].money += dayTotal.money;
-        weekly[weekKey].hours += dayTotal.hours;
-        monthly[monthKey].money += dayTotal.money;
-        monthly[monthKey].hours += dayTotal.hours;
+      const jobList: Record<string, { rate: number }> = JSON.parse(jobsRaw);
+      const jobs = Object.keys(jobList);
+      const colors = ['#2563eb', '#10b981', '#6366f1', '#f59e42', '#ef4444', '#fbbf24'];
+      const assignedJobInfo: Record<string, JobInfo> = {};
+      jobs.forEach((job, index) => {
+        assignedJobInfo[job] = {
+          rate: jobList[job].rate,
+          color: colors[index % colors.length],
+        };
       });
-
-      setTotals({ daily, weekly, monthly, byJob });
-      setEntries(entries);
-      setCurrentMonthKey(getCurrentMonthKey());
+      setJobInfo(assignedJobInfo);
     };
 
-    fetchStats();
+    fetchAndProcessData();
   }, []);
 
-  // Filtrado para mostrar solo el mes actual por defecto
-  let data: [string, Totals][] = [];
-  let sectionTitle = '';
-  if (selectedTab === 'monthly') {
-    data = Object.entries(totals.monthly).filter(([key]) => key === currentMonthKey);
-    sectionTitle = `Mes actual (${currentMonthKey})`;
-  } else if (selectedTab === 'weekly') {
-    data = Object.entries(totals.weekly);
-    sectionTitle = 'Totales semanales';
-  } else if (selectedTab === 'daily') {
-    data = Object.entries(totals.daily);
-    sectionTitle = 'Totales diarios';
-  } else if (selectedTab === 'byJob') {
-    data = Object.entries(totals.byJob);
-    sectionTitle = 'Totales por trabajo';
-  }
-
-  // For daily summary below the graph
-  let dailyData: [string, Totals][] = Object.entries(totals.daily);
-  // Filtering and ordering
-  if (orderBy === 'money') {
-    dailyData = dailyData.sort((a, b) => orderAsc ? a[1].money - b[1].money : b[1].money - a[1].money);
-  } else if (orderBy === 'hours') {
-    dailyData = dailyData.sort((a, b) => orderAsc ? a[1].hours - b[1].hours : b[1].hours - a[1].hours);
-  } else {
-    dailyData = dailyData.sort((a, b) => orderAsc ? a[0].localeCompare(b[0]) : b[0].localeCompare(a[0]));
-  }
-
-  const screenWidth = Dimensions.get('window').width - 40;
-  const screenHeight = Dimensions.get('window').height;
-  const chartHeight = Math.floor(screenHeight * 0.4); // 40% of screen
-
-  // Selecciona el periodo según el tab activo
-  const period: 'daily' | 'weekly' | 'monthly' =
-    selectedTab === 'daily' ? 'daily' : selectedTab === 'weekly' ? 'weekly' : 'monthly';
-
-  const jobHours = getHoursByJobForPeriod(period);
-  const jobLabels = Object.keys(jobHours);
-  const jobData = Object.values(jobHours);
-
-  // Mueve aquí la función:
-  function getHoursByJobForPeriod(period: 'daily' | 'weekly' | 'monthly') {
-    let periodKey = '';
-    if (period === 'daily') periodKey = new Date().toISOString().slice(0, 10);
-    if (period === 'weekly') {
-      const today = new Date();
-      const year = today.getFullYear();
-      const week = getWeek(today.toISOString().slice(0, 10));
-      periodKey = `${year}-W${week}`;
+  // --- DATE FILTER LOGIC ---
+  useEffect(() => {
+    if (filterMode === 'week') {
+      const start = getStartOfWeek(currentDate);
+      const end = new Date(start);
+      end.setDate(start.getDate() + 6);
+      setDateRange({
+        startDate: start.toISOString().slice(0, 10),
+        endDate: end.toISOString().slice(0, 10),
+      });
+    } else if (filterMode === 'month') {
+      const start = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+      const end = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+      setDateRange({
+        startDate: start.toISOString().slice(0, 10),
+        endDate: end.toISOString().slice(0, 10),
+      });
     }
-    if (period === 'monthly') periodKey = new Date().toISOString().slice(0, 7);
+  }, [currentDate, filterMode]);
 
-    // Agrupa horas por trabajo según el periodo
-    const jobHours: Record<string, number> = {};
-    Object.entries(totals.daily).forEach(([date]) => {
-      let match = false;
-      if (period === 'daily' && date === periodKey) match = true;
-      if (period === 'weekly') {
-        const weekKey = `${date.slice(0, 4)}-W${getWeek(date)}`;
-        if (weekKey === periodKey) match = true;
+  const handleDateNav = (direction: 'prev' | 'next') => {
+    const newDate = new Date(currentDate);
+    const increment = direction === 'prev' ? -1 : 1;
+    if (filterMode === 'week') newDate.setDate(newDate.getDate() + (7 * increment));
+    if (filterMode === 'month') newDate.setMonth(newDate.getMonth() + increment);
+    setCurrentDate(newDate);
+  };
+
+  const onDayPress = (day: DateData) => {
+    if (!tempDateRange.startDate || (tempDateRange.startDate && tempDateRange.endDate)) {
+      const newStartDate = day.dateString;
+      setTempDateRange({ startDate: newStartDate, endDate: null });
+      setMarkedDates({ [newStartDate]: { startingDay: true, color: '#2563eb', textColor: 'white' } });
+    } else {
+      let start = new Date(tempDateRange.startDate);
+      let end = new Date(day.dateString);
+      if (start > end) [start, end] = [end, start];
+      
+      const range: Record<string, { color: string; textColor: string; startingDay?: boolean; endingDay?: boolean; }> = {};
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const dateString = d.toISOString().slice(0, 10);
+        range[dateString] = { color: '#93c5fd', textColor: 'white' };
       }
-      if (period === 'monthly' && date.slice(0, 7) === periodKey) match = true;
-      if (match && entries[date]) {
-        entries[date].forEach((entry: WorkEntry) => {
-          jobHours[entry.job] = (jobHours[entry.job] || 0) + entry.hours;
+      range[start.toISOString().slice(0, 10)] = { ...range[start.toISOString().slice(0, 10)], startingDay: true };
+      range[end.toISOString().slice(0, 10)] = { ...range[end.toISOString().slice(0, 10)], endingDay: true };
+      
+      setTempDateRange({ startDate: start.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) });
+      setMarkedDates(range);
+    }
+  };
+
+  const applyDateFilter = () => {
+    if (tempDateRange.startDate && tempDateRange.endDate) {
+      setDateRange({ startDate: tempDateRange.startDate, endDate: tempDateRange.endDate });
+      setFilterMode('range');
+      setCalendarVisible(false);
+    }
+  };
+
+  // --- DATA PROCESSING ---
+  const filteredEntries = useMemo(() => {
+    if (!dateRange.startDate || !dateRange.endDate) return [];
+    
+    return Object.entries(allEntries)
+      .filter(([date]) => date >= dateRange.startDate && date <= dateRange.endDate)
+      .flatMap(([date, entries]) => entries.map(entry => ({ ...entry, date })));
+  }, [allEntries, dateRange]);
+
+  const getHeaderTitle = () => {
+    if (filterMode === 'range') return `${dateRange.startDate} - ${dateRange.endDate}`;
+    if (filterMode === 'week') {
+        const start = new Date(dateRange.startDate);
+        const end = new Date(dateRange.endDate);
+        return `${start.toLocaleDateString('es-ES', {day:'numeric', month:'short'})} - ${end.toLocaleDateString('es-ES', {day:'numeric', month:'short'})}`;
+    }
+    if (filterMode === 'month') {
+        return new Date(currentDate).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+    }
+    return '';
+  };
+
+  const renderCharts = () => {
+    const screenWidth = Dimensions.get('window').width - 20;
+    const jobs = Object.keys(jobInfo);
+    const colors = Object.values(jobInfo).map(j => j.color);
+
+    if (selectedTab === 'byJob') {
+        const jobTotals = filteredEntries.reduce((acc, entry) => {
+            const value = displayMode === 'hours' ? entry.hours : entry.hours * (jobInfo[entry.job]?.rate || 0);
+            acc[entry.job] = (acc[entry.job] || 0) + value;
+            return acc;
+        }, {} as Record<string, number>);
+
+        const pieData = jobs.map(job => ({
+            name: job,
+            population: jobTotals[job] || 0,
+            color: jobInfo[job]?.color || '#ccc',
+            legendFontColor: '#374151',
+            legendFontSize: 14,
+        })).filter(item => item.population > 0);
+
+        return pieData.length > 0 ? (
+            <View>
+                <PieChart
+                    data={pieData}
+                    width={screenWidth}
+                    height={220}
+                    chartConfig={{ color: (opacity = 1) => `rgba(0, 0, 0, ${opacity})` }}
+                    accessor="population"
+                    backgroundColor="transparent"
+                    paddingLeft="0"
+                    absolute
+                    hasLegend={false}
+                />
+                <View style={styles.legendContainer}>
+                    {pieData.map(item => (
+                        <View key={item.name} style={styles.legendItem}>
+                            <View style={[styles.legendColorBox, { backgroundColor: item.color }]} />
+                            <Text style={styles.legendText}>{item.name}: </Text>
+                            <Text style={styles.legendValue}>
+                                {displayMode === 'money' 
+                                    ? `${item.population.toFixed(2)} €` 
+                                    : `${item.population.toFixed(2)} h`}
+                            </Text>
+                        </View>
+                    ))}
+                </View>
+            </View>
+        ) : <Text style={styles.emptyText}>Sin datos para el gráfico.</Text>;
+    }
+    
+    let labels: string[] = [];
+    let data: number[][] = [];
+
+    if (selectedTab === 'weekly') {
+        labels = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+        const weekData: Record<number, Record<string, number>> = {}; // 0=Mon, 6=Sun
+
+        filteredEntries.forEach(entry => {
+            let dayIndex = new Date(entry.date).getUTCDay() -1; // Monday is 0
+            if (dayIndex === -2) dayIndex = 6; // Sunday
+            if (!weekData[dayIndex]) weekData[dayIndex] = {};
+            const value = displayMode === 'hours' ? entry.hours : entry.hours * (jobInfo[entry.job]?.rate || 0);
+            weekData[dayIndex][entry.job] = (weekData[dayIndex][entry.job] || 0) + value;
         });
-      }
-    });
-    return jobHours;
+        data = Array.from({ length: 7 }, (_, i) => jobs.map(job => weekData[i]?.[job] || 0));
+    }
+
+    if (selectedTab === 'monthly') {
+        const monthData: Record<number, Record<string, number>> = {}; // Key is week number
+        filteredEntries.forEach(entry => {
+            const weekNum = getWeek(new Date(entry.date));
+            if (!monthData[weekNum]) monthData[weekNum] = {};
+            const value = displayMode === 'hours' ? entry.hours : entry.hours * (jobInfo[entry.job]?.rate || 0);
+            monthData[weekNum][entry.job] = (monthData[weekNum][entry.job] || 0) + value;
+        });
+        labels = Object.keys(monthData).map(w => `S${w}`).sort();
+        data = labels.map(label => {
+            const weekNum = parseInt(label.substring(1));
+            return jobs.map(job => monthData[weekNum]?.[job] || 0);
+        });
+    }
+    
+    const chartData = { labels, legend: jobs, data, barColors: colors };
+
+    return data.flat().reduce((a, b) => a + b, 0) > 0 ? (
+        <StackedBarChart
+            style={{ borderRadius: 8, marginTop: 10 }}
+            data={chartData}
+            width={screenWidth}
+            height={300}
+            chartConfig={{
+                backgroundColor: '#f9fafb',
+                backgroundGradientFrom: '#f9fafb',
+                backgroundGradientTo: '#f9fafb',
+                color: (opacity = 1) => `rgba(55, 65, 81, ${opacity})`,
+                labelColor: (opacity = 1) => `rgba(55, 65, 81, ${opacity})`,
+            }}
+            withHorizontalLabels
+            hideLegend={false}
+        />
+    ) : <Text style={styles.emptyText}>Sin datos para este período.</Text>;
   }
 
-  return (
-    <ScrollView style={styles.container}>
-      <Text style={styles.title}>Estadísticas</Text>
+  const listData = useMemo(() => {
+    if (selectedTab === 'daily') {
+      return filteredEntries.map((entry, index) => ({ ...entry, id: `${entry.date}-${index}` }));
+    }
+    return []; // Return empty array for chart tabs
+  }, [selectedTab, filteredEntries]);
+
+  const renderHeader = () => (
+    <>      
+      {/* 1. Main Tabs */}
       <View style={styles.tabs}>
         {TABS.map(tab => (
           <TouchableOpacity
             key={tab.key}
-            style={[
-              styles.tab,
-              selectedTab === tab.key && styles.tabActive
-            ]}
-            onPress={() => setSelectedTab(tab.key as any)}
+            style={[styles.tab, selectedTab === tab.key && styles.tabActive]}
+            onPress={() => {
+              setSelectedTab(tab.key as any);
+              if (tab.key === 'weekly') {
+                setFilterMode('week');
+                setCurrentDate(new Date());
+              } else if (tab.key === 'monthly') {
+                setFilterMode('month');
+                setCurrentDate(new Date());
+              }
+            }}
           >
-            <Text style={[
-              styles.tabText,
-              selectedTab === tab.key && styles.tabTextActive
-            ]}>
-              {tab.label}
-            </Text>
+            <Text style={[styles.tabText, selectedTab === tab.key && styles.tabTextActive]}>{tab.label}</Text>
           </TouchableOpacity>
         ))}
       </View>
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
-        <Text style={{ marginRight: 8, color: showMoney ? '#2563eb' : '#10b981', fontWeight: 'bold' }}>{showMoney ? 'Dinero' : 'Horas'}</Text>
-        <Switch
-          value={showMoney}
-          onValueChange={setShowMoney}
-          thumbColor={showMoney ? '#2563eb' : '#10b981'}
-          trackColor={{ false: '#a7f3d0', true: '#93c5fd' }}
-        />
-      </View>
-      <Text style={styles.sectionTitle}>{sectionTitle}</Text>
 
-      {/* LineChart for time series (monthly, weekly, daily) */}
-      {['monthly', 'weekly', 'daily'].includes(selectedTab) && data.length > 0 && (
-        <LineChart
-          data={{
-            labels: data.map(([key]) => key.length > 6 ? key.slice(-5) : key),
-            datasets: [{ data: data.map(([, value]) => showMoney ? value.money : value.hours) }]
-          }}
-          width={screenWidth}
-          height={chartHeight}
-          yAxisLabel={showMoney ? '€' : ''}
-          yAxisSuffix={showMoney ? '' : 'h'}
-          chartConfig={{
-            backgroundColor: '#f9fafb',
-            backgroundGradientFrom: '#f9fafb',
-            backgroundGradientTo: '#f9fafb',
-            decimalPlaces: showMoney ? 2 : 1,
-            color: (opacity = 1) => showMoney ? `rgba(37, 99, 235, ${opacity})` : `rgba(16, 185, 129, ${opacity})`,
-            labelColor: (opacity = 1) => `rgba(55, 65, 81, ${opacity})`,
-            style: { borderRadius: 8 },
-            propsForDots: { r: '6', strokeWidth: '2', stroke: showMoney ? '#2563eb' : '#10b981' }
-          }}
-          style={{ marginVertical: 8, borderRadius: 8 }}
-          fromZero
-        />
-      )}
+      {/* FILTERS SECTION */}
+      <View style={styles.filterSection}>
+        <Text style={styles.filterTitle}>Filtros</Text>
+        <View style={styles.filterControls}>
+            {/* 2. Switch */}
+            <View style={[styles.mainControls, (selectedTab === 'weekly' || selectedTab === 'monthly') && {flex: 1}]}>
+                <View style={styles.switchContainer}>
+                <Text style={styles.controlLabel}>Horas</Text>
+                <Switch
+                    style={{ transform: [{ scale: 0.8 }] }}
+                    value={displayMode === 'money'}
+                    onValueChange={(val) => setDisplayMode(val ? 'money' : 'hours')}
+                    thumbColor={displayMode === 'money' ? '#10b981' : '#2563eb'}
+                    trackColor={{ false: '#93c5fd', true: '#a7f3d0' }}
+                />
+                <Text style={styles.controlLabel}>Dinero</Text>
+                </View>
+            </View>
 
-      {/* PieChart for job distribution */}
-      {selectedTab === 'byJob' && data.length > 0 && (
-        <PieChart
-          data={data.map(([key, value], i) => ({
-            name: key,
-            population: showMoney ? value.money : value.hours,
-            color: ['#2563eb', '#10b981', '#6366f1', '#f59e42', '#ef4444', '#fbbf24', '#a3e635', '#f472b6'][i % 8],
-            legendFontColor: '#374151',
-            legendFontSize: 14
-          }))}
-          width={screenWidth}
-          height={chartHeight}
-          chartConfig={{
-            backgroundColor: '#f9fafb',
-            backgroundGradientFrom: '#f9fafb',
-            backgroundGradientTo: '#f9fafb',
-            color: (opacity = 1) => `rgba(37, 99, 235, ${opacity})`,
-            labelColor: (opacity = 1) => `rgba(55, 65, 81, ${opacity})`,
-          }}
-          accessor={'population'}
-          backgroundColor={'transparent'}
-          paddingLeft={'8'}
-          absolute
-        />
-      )}
-
-      {/* Filtros y orden para resumen diario */}
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginVertical: 8 }}>
-        <Text style={{ fontWeight: 'bold', color: '#2563eb' }}>Resumen diario</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <TouchableOpacity onPress={() => setOrderBy('date')} style={{ marginHorizontal: 4 }}>
-            <Text style={{ color: orderBy === 'date' ? '#2563eb' : '#888' }}>Fecha</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setOrderBy('money')} style={{ marginHorizontal: 4 }}>
-            <Text style={{ color: orderBy === 'money' ? '#2563eb' : '#888' }}>Dinero</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setOrderBy('hours')} style={{ marginHorizontal: 4 }}>
-            <Text style={{ color: orderBy === 'hours' ? '#2563eb' : '#888' }}>Horas</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setOrderAsc(a => !a)} style={{ marginHorizontal: 4 }}>
-            <Text style={{ color: '#2563eb' }}>{orderAsc ? '↑' : '↓'}</Text>
-          </TouchableOpacity>
+            {/* 3. Date Filter */}
+            {(selectedTab === 'daily' || selectedTab === 'byJob') && (
+              <View style={[styles.tabs, { flex: 1.5, marginLeft: 10 }]}>
+                  {FILTER_MODES.map(mode => (
+                  <TouchableOpacity
+                      key={mode.key}
+                      style={[styles.tab, filterMode === mode.key && styles.tabActive]}
+                      onPress={() => {
+                      if (mode.key === 'range') {
+                          setTempDateRange({ startDate: null, endDate: null });
+                          setMarkedDates({});
+                          setCalendarVisible(true);
+                      } else {
+                          setFilterMode(mode.key as any);
+                          setCurrentDate(new Date());
+                      }
+                      }}
+                  >
+                      <Text style={[styles.tabText, filterMode === mode.key && styles.tabTextActive]}>{mode.label}</Text>
+                  </TouchableOpacity>
+                  ))}
+              </View>
+            )}
         </View>
       </View>
+      
+      {filterMode !== 'range' && (
+        <View style={styles.dateNavigator}>
+          <TouchableOpacity onPress={() => handleDateNav('prev')} style={styles.dateNavButton}><Text style={styles.dateNavButtonText}>Anterior</Text></TouchableOpacity>
+          <Text style={styles.dateHeaderText}>{getHeaderTitle()}</Text>
+          <TouchableOpacity onPress={() => handleDateNav('next')} style={styles.dateNavButton}><Text style={styles.dateNavButtonText}>Siguiente</Text></TouchableOpacity>
+        </View>
+      )}
+      {filterMode === 'range' && <Text style={styles.dateHeaderTextCenter}>{getHeaderTitle()}</Text>}
 
-      <ScrollView style={{ maxHeight: Math.floor(screenHeight * 0.5) }}>
-        {dailyData.length === 0 ? (
-          <Text style={{ color: '#888', textAlign: 'center' }}>Sin datos</Text>
-        ) : (
-          dailyData.map((item) => (
-            <View style={styles.item} key={item[0]}>
-              <Text style={styles.job}>{item[0]}</Text>
-              <View>
-                <Text style={styles.amount}>{item[1].money.toFixed(2)} €</Text>
-                <Text style={styles.hours}>{item[1].hours.toFixed(2)} h</Text>
-              </View>
+      {/* 4. Charts (if not daily tab) */}
+      {selectedTab !== 'daily' && renderCharts()}
+    </>
+  );
+
+  return (
+    <>
+      <FlatList
+        style={styles.container}
+        data={listData}
+        ListHeaderComponent={renderHeader}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
+          <View style={styles.item}>
+            <View>
+              <Text style={[styles.job, { color: jobInfo[item.job]?.color || '#374151' }]}>{item.job}</Text>
+              <Text style={styles.dateText}>{item.date}</Text>
             </View>
-          ))
+            <Text style={styles.hours}>
+              {displayMode === 'hours'
+                ? `${item.hours.toFixed(2)} h`
+                : `${(item.hours * (jobInfo[item.job]?.rate || 0)).toFixed(2)} €`}
+            </Text>
+          </View>
         )}
-      </ScrollView>
-    </ScrollView>
+        ListEmptyComponent={selectedTab === 'daily' ? <Text style={styles.emptyText}>Sin datos en este rango.</Text> : null}
+      />
+
+      <Modal visible={isCalendarVisible} animationType="slide">
+        <View style={{ flex: 1, justifyContent: 'center', padding: 20 }}>
+          <Calendar onDayPress={onDayPress} markedDates={markedDates} markingType="period" />
+          <View style={{ marginTop: 20 }}><Button title="Aplicar" onPress={applyDateFilter} disabled={!tempDateRange.startDate || !tempDateRange.endDate} /></View>
+          <View style={{ marginTop: 10 }}><Button title="Cancelar" onPress={() => setCalendarVisible(false)} color="grey" /></View>
+        </View>
+      </Modal>
+    </>
   );
 }
 
+// --- STYLES ---
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f9fafb',
-    padding: 20,
+  container: { 
+    flex: 1, 
+    paddingHorizontal: 15, 
+    backgroundColor: '#f8f9fa' 
   },
-  title: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 16,
-    color: '#111827',
+  title: { 
+    fontSize: 26, 
+    fontWeight: 'bold', 
+    color: '#2c3e50', 
+    textAlign: 'center', 
+    marginVertical: 20 
   },
-  tabs: {
-    flexDirection: 'row',
-    marginBottom: 12,
-    borderRadius: 8,
-    backgroundColor: '#e5e7eb',
-    overflow: 'hidden',
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 10,
-    alignItems: 'center',
-    backgroundColor: '#e5e7eb',
-  },
-  tabActive: {
-    backgroundColor: '#2563eb',
-  },
-  tabText: {
-    color: '#374151',
-    fontWeight: '500',
-  },
-  tabTextActive: {
-    color: '#fff',
-    fontWeight: 'bold',
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginTop: 10,
-    marginBottom: 8,
-    color: '#2563eb',
-    textAlign: 'center',
-  },
-  item: {
+  mainControls: { 
+    flexDirection: 'row', 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    padding: 2,
     backgroundColor: '#ffffff',
-    padding: 12,
+    borderRadius: 50,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  switchContainer: { 
+    flexDirection: 'row', 
+    alignItems: 'center' 
+  },
+  controlLabel: { 
+    marginHorizontal: 4, 
+    fontWeight: '600', 
+    fontSize: 14,
+    color: '#34495e' 
+  },
+  tabs: { 
+    flexDirection: 'row', 
+    borderRadius: 12, 
+    backgroundColor: '#eef2f5', 
+    overflow: 'hidden', 
+    padding: 4,
+  },
+  tab: { 
+    flex: 1, 
+    paddingVertical: 10, 
+    alignItems: 'center',
     borderRadius: 8,
-    marginBottom: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  },
+  tabActive: { 
+    backgroundColor: '#ffffff',
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.20,
+    shadowRadius: 1.41,
     elevation: 2,
   },
-  job: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#374151',
+  tabText: { 
+    color: '#7f8c8d', 
+    fontWeight: 'bold' 
   },
-  amount: {
-    fontSize: 16,
+  tabTextActive: { 
+    color: '#2980b9' 
+  },
+  filterSection: {
+    marginTop: 20,
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 15,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 3.84,
+    elevation: 5,
+    marginBottom: 16,
+  },
+  filterTitle: {
+    fontSize: 18,
     fontWeight: 'bold',
-    color: '#10b981',
+    color: '#2c3e50',
+    marginBottom: 15,
   },
-  hours: {
+  filterControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  dateNavigator: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    marginBottom: 20,
+    marginTop: 10,
+  },
+  dateHeaderText: { 
+    fontWeight: 'bold', 
+    fontSize: 16, 
+    color: '#2c3e50' 
+  },
+  dateHeaderTextCenter: { 
+    fontWeight: 'bold', 
+    fontSize: 16, 
+    color: '#2c3e50', 
+    textAlign: 'center', 
+    marginVertical: 16 
+  },
+  dateNavButton: { 
+    backgroundColor: '#ffffff', 
+    paddingVertical: 10, 
+    paddingHorizontal: 20, 
+    borderRadius: 20,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.15,
+    shadowRadius: 2.22,
+    elevation: 3,
+  },
+  dateNavButtonText: { 
+    color: '#3498db', 
+    fontWeight: 'bold' 
+  },
+  item: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    padding: 20,
+    backgroundColor: '#ffffff', 
+    borderRadius: 12, 
+    marginBottom: 12,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.08,
+    shadowRadius: 3.84,
+    elevation: 3,
+  },
+  job: { 
+    fontSize: 16, 
+    fontWeight: 'bold' 
+  },
+  hours: { 
+    fontSize: 16, 
+    fontWeight: 'bold',
+    color: '#34495e' 
+  },
+  dateText: { 
+    fontSize: 12, 
+    color: '#7f8c8d',
+    marginTop: 4,
+  },
+  emptyText: { 
+    textAlign: 'center', 
+    marginVertical: 50, 
+    fontSize: 16, 
+    color: '#95a5a6' 
+  },
+  legendContainer: {
+    marginTop: 20,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 15,
+    marginBottom: 10,
+  },
+  legendColorBox: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    marginRight: 8,
+  },
+  legendText: {
     fontSize: 14,
-    color: '#6366f1',
-    fontWeight: '500',
+    color: '#34495e',
+  },
+  legendValue: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#2c3e50',
   },
 });

@@ -8,10 +8,51 @@ interface WorkEntry {
 
 type WorkData = Record<string, WorkEntry[]>;
 
-export async function generateStyledPDF(entries: WorkData, year: number, month: number) {
+export async function generateStyledPDF(entries: WorkData, year: number, month: number, userName: string) {
   const monthNames = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
   const monthString = String(month + 1).padStart(2, '0');
   const title = `${monthNames[month]} ${year}`;
+
+  // --- Calculate Job Summary ---
+  const jobSummary: Record<string, number> = {};
+  let totalHours = 0;
+  Object.entries(entries).forEach(([date, dayEntries]) => {
+    if (date.startsWith(`${year}-${monthString}`)) {
+      dayEntries.forEach(entry => {
+        jobSummary[entry.job] = (jobSummary[entry.job] || 0) + entry.hours;
+        totalHours += entry.hours;
+      });
+    }
+  });
+
+  // --- Generate Chart URL ---
+  const chartConfig = {
+    type: 'pie',
+    data: {
+      labels: Object.keys(jobSummary),
+      datasets: [{
+        data: Object.values(jobSummary),
+        backgroundColor: ['#2563eb', '#10b981', '#6366f1', '#f59e42', '#ef4444', '#fbbf24']
+      }]
+    },
+    options: {
+      plugins: {
+        legend: { position: 'right' }
+      }
+    }
+  };
+  const chartUrl = `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify(chartConfig))}&width=500&height=300`;
+
+  // --- Generate Job Summary HTML ---
+  let summaryHtml = '<div class="summary"><h2>Resumen Mensual</h2>';
+  summaryHtml += `<div style="font-size: 18px; margin-bottom: 15px; color: #2563eb;"><strong>Total Horas Trabajadas:</strong> ${totalHours.toFixed(2)}h</div>`;
+  summaryHtml += '<h3>Desglose por Trabajo</h3><ul>';
+  for (const [job, hours] of Object.entries(jobSummary)) {
+    summaryHtml += `<li><strong>${job}:</strong> ${hours.toFixed(2)} horas</li>`;
+  }
+  summaryHtml += '</ul>';
+  summaryHtml += `<div style="display:flex; justify-content:center; margin-top:20px;"><img src="${chartUrl}" width="500" height="300" /></div>`;
+  summaryHtml += '</div>';
 
   // Genera el calendario mensual
   let html = `
@@ -19,7 +60,7 @@ export async function generateStyledPDF(entries: WorkData, year: number, month: 
     <head>
       <meta charset="utf-8" />
       <style>
-        body { font-family: Arial, sans-serif; background: #fff; margin: 0; }
+        body { font-family: Arial, sans-serif; background: #fff; margin: 0; padding: 20px; }
         .calendar-title { font-size: 60px; font-weight: 700; color: #2563eb; text-align: right; margin: 24px 32px 0 0; letter-spacing: 2px; }
         .calendar-title span { color: #6b7280; font-size: 56px; font-weight: 600; margin-left: 16px; }
         table.calendar { width: 100%; border-collapse: collapse; margin-top: 16px; }
@@ -29,10 +70,17 @@ export async function generateStyledPDF(entries: WorkData, year: number, month: 
         th.sat, td.sat { background: #444; color: #fff; }
         th.sun, td.sun { background: #888; color: #fff; }
         .jobs { font-size: 13px; margin-top: 2px; }
+        .summary { margin-top: 30px; padding-top: 20px; border-top: 2px solid #2563eb; }
+        .summary h2 { font-size: 24px; color: #2563eb; }
+        .summary ul { list-style-type: none; padding: 0; }
+        .summary li { font-size: 16px; margin-bottom: 8px; }
       </style>
     </head>
     <body>
-      <div class="calendar-title">${monthNames[month]} <span>${year}</span></div>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-right: 32px;">
+        <div style="font-size: 24px; font-weight: bold; color: #333; margin-left: 20px;">${userName || 'Usuario'}</div>
+        <div class="calendar-title">${monthNames[month]} <span>${year}</span></div>
+      </div>
       <table class="calendar">
         <tr>
           <th>Lunes</th>
@@ -82,12 +130,7 @@ export async function generateStyledPDF(entries: WorkData, year: number, month: 
     html += '</tr>';
   }
 
-  html += `</table></body></html>`;
-
-  html += `
-    </body>
-    </html>
-  `;
+  html += `</table>${summaryHtml}</body></html>`;
 
   const file = await Print.printToFileAsync({ html });
   if (!file || !file.uri) throw new Error('No se pudo generar el archivo PDF');
