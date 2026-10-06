@@ -37,6 +37,25 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify Vite secrets
+        env:
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+        run: |
+          missing=0
+          for name in VITE_FIREBASE_API_KEY VITE_FIREBASE_AUTH_DOMAIN VITE_FIREBASE_PROJECT_ID VITE_FIREBASE_STORAGE_BUCKET VITE_FIREBASE_MESSAGING_SENDER_ID VITE_FIREBASE_APP_ID; do
+            eval "val=\$$name"
+            if [ -z "$val" ]; then
+              echo "::error::Falta el secret $name en GitHub → Settings → Secrets → Actions"
+              missing=1
+            fi
+          done
+          exit $missing
+
       - name: Build
         run: npm run build
         env:
@@ -52,9 +71,10 @@ jobs:
           SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
           if [ -z "$SERVICE_ACCOUNT" ]; then
-            echo "::error::Falta el secret FIREBASE_SERVICE_ACCOUNT (Settings → Secrets and variables → Actions). Pega el JSON completo de la clave firebase-adminsdk."
+            echo "::error::Falta FIREBASE_SERVICE_ACCOUNT: pega el JSON completo de firebase-adminsdk (Repository secrets)."
             exit 1
           fi
+          python3 -c "import json, os; json.loads(os.environ['SERVICE_ACCOUNT']); print('FIREBASE_SERVICE_ACCOUNT: JSON válido')"
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -62,4 +82,6 @@ jobs:
           credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 
       - name: Deploy Hosting and Firestore rules
-        run: npx firebase-tools deploy --only hosting,firestore:rules --non-interactive
+        run: |
+          test -d dist || { echo "::error::No existe dist/ tras el build"; exit 1; }
+          npx firebase-tools deploy --only hosting,firestore:rules --non-interactive --project micontrolhorario-11cba
