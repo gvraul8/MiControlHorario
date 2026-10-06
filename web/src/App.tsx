@@ -5,6 +5,7 @@ import LoginPage from './pages/LoginPage';
 import CalendarPage from './pages/CalendarPage';
 import JobsPage from './pages/JobsPage';
 import StatsPage from './pages/StatsPage';
+import AccountPage from './pages/AccountPage';
 
 export default function App() {
   return (
@@ -16,6 +17,7 @@ export default function App() {
             <Route path="/" element={<CalendarPage />} />
             <Route path="/trabajos" element={<JobsPage />} />
             <Route path="/estadisticas" element={<StatsPage />} />
+            <Route path="/cuenta" element={<AccountPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

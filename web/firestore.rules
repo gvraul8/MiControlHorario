@@ -7,9 +7,9 @@ service cloud.firestore {
     }
 
     match /allowedEmails/{email} {
-      allow read: if isSignedIn() && request.auth.token.email == email;
+      allow read: if isSignedIn() && lower(request.auth.token.email) == email;
       allow update: if isSignedIn()
-        && request.auth.token.email == email
+        && lower(request.auth.token.email) == email
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
         && request.resource.data.status == 'active';
       allow create, delete: if false;

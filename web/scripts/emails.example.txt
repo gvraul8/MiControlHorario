@@ -1,0 +1,3 @@
+# Un email por línea (líneas con # se ignoran)
+# persona1@empresa.com
+# persona2@empresa.com

@@ -46,6 +46,34 @@ Solo los emails preautorizados pueden entrar. Para invitar a alguien:
 
 Tras el primer acceso, `status` pasa a `active` automáticamente.
 
+### Invitar desde el PC (script)
+
+En lugar de crear documentos a mano en la consola:
+
+1. Descarga el JSON de la cuenta **firebase-adminsdk** (Firebase → Configuración → Cuentas de servicio → Generar clave).
+2. Guárdalo como `web/service-account.json` (está en `.gitignore`) **o** pasa la ruta con `--key`.
+3. Desde `web/`:
+
+```powershell
+npm install
+npm run invite:grant -- gvraul8@gmail.com otro@empresa.com
+```
+
+Lista en archivo (`scripts/emails.example.txt` como plantilla):
+
+```powershell
+npm run invite:grant -- --file mi-lista.txt
+```
+
+Con ruta explícita a la clave:
+
+```powershell
+$env:GOOGLE_APPLICATION_CREDENTIALS="C:\ruta\clave.json"
+npm run invite:grant -- email@empresa.com
+```
+
+Ayuda: `npm run invite:grant -- --help`
+
 ### Reglas de seguridad
 
 Despliega las reglas incluidas:
@@ -164,6 +192,7 @@ La sesión permanece iniciada entre visitas (Firebase Auth con persistencia loca
 | `npm run firebase:rules` | Desplegar solo reglas Firestore |
 | `npm run firebase:deploy` | Build + desplegar hosting y reglas |
 | `npm run icons:process` | Regenerar iconos PWA desde `public/icon.png` (Python + Pillow) |
+| `npm run invite:grant` | Añadir emails a `allowedEmails` (cuenta de servicio) |
 
 ## Estructura de datos
 

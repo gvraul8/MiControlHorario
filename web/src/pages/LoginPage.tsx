@@ -1,10 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import {
   checkEmailRegistration,
   loginWithEmail,
+  completeGoogleLinkWithPassword,
+  formatAuthError,
+  getPendingGoogleLinkRequest,
   loginWithGoogle,
+  PendingGoogleLinkError,
   registerWithEmail,
 } from '../services/authService';
 import { isFirebaseConfigured } from '../lib/firebase';
@@ -21,6 +25,17 @@ export default function LoginPage() {
   const [mode, setMode] = useState<AuthMode>('login');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
+  const [googleLinkEmail, setGoogleLinkEmail] = useState<string | null>(null);
+  const [linkPassword, setLinkPassword] = useState('');
+
+  useEffect(() => {
+    const pending = getPendingGoogleLinkRequest();
+    if (pending) {
+      setGoogleLinkEmail(pending.email);
+      setEmail(pending.email);
+    }
+  }, []);
 
   if (loading) {
     return (
@@ -71,11 +86,37 @@ export default function LoginPage() {
 
   async function handleGoogleLogin() {
     setError(null);
+    setGoogleBusy(true);
+    let awaitingRedirect = false;
+    try {
+      const signedIn = await loginWithGoogle();
+      if (signedIn === null) {
+        awaitingRedirect = true;
+        return;
+      }
+    } catch (err) {
+      if (err instanceof PendingGoogleLinkError) {
+        setGoogleLinkEmail(err.email);
+        setEmail(err.email);
+        setError(null);
+      } else {
+        setError(formatAuthError(err));
+      }
+    } finally {
+      if (!awaitingRedirect) {
+        setGoogleBusy(false);
+      }
+    }
+  }
+
+  async function handleGoogleLinkPassword(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
     setSubmitting(true);
     try {
-      await loginWithGoogle();
+      await completeGoogleLinkWithPassword(linkPassword);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error con Google');
+      setError(formatAuthError(err));
     } finally {
       setSubmitting(false);
     }
@@ -157,21 +198,44 @@ export default function LoginPage() {
           </button>
         </form>
 
+        {googleLinkEmail && (
+          <form className="login-form google-link-box" onSubmit={handleGoogleLinkPassword}>
+            <p className="info-text">
+              El email <strong>{googleLinkEmail}</strong> ya tiene contraseña. Introdúcela una vez
+              para vincular Google a la misma cuenta.
+            </p>
+            <label htmlFor="googleLinkPassword">Contraseña de la app</label>
+            <input
+              id="googleLinkPassword"
+              type="password"
+              value={linkPassword}
+              onChange={(e) => setLinkPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+            <button type="submit" className="btn btn-primary" disabled={submitting}>
+              {submitting ? 'Vinculando…' : 'Entrar y vincular Google'}
+            </button>
+          </form>
+        )}
+
         <div className="divider">o</div>
 
         <button
           type="button"
           className="btn btn-google"
           onClick={handleGoogleLogin}
-          disabled={submitting}
+          disabled={submitting || googleBusy}
         >
           <GoogleIcon />
-          <span>Continuar con Google</span>
+          <span>
+            {googleBusy ? 'Abriendo Google…' : 'Continuar con Google'}
+          </span>
         </button>
 
         <p className="login-hint">
-          Solo puedes entrar si tu administrador ha autorizado tu email. Con Google debes usar el
-          mismo correo invitado.
+          Solo puedes entrar si tu administrador ha autorizado tu email. Email/contraseña y Google
+          pueden ser la misma cuenta: vincula el segundo método en Cuenta.
         </p>
       </div>
     </div>

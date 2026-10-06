@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom';
+import { Link, NavLink } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import BrandMark from './BrandMark';
 import TabIcon from './TabIcons';
@@ -23,9 +23,14 @@ export default function AppLayout({ children }: AppLayoutProps) {
         <div className="app-header-brand">
           <BrandMark variant="header" subtitle={user?.email ?? undefined} />
         </div>
-        <button type="button" className="btn btn-ghost" onClick={() => signOut()}>
-          Salir
-        </button>
+        <div className="app-header-actions">
+          <Link to="/cuenta" className="btn btn-ghost">
+            Cuenta
+          </Link>
+          <button type="button" className="btn btn-ghost" onClick={() => signOut()}>
+            Salir
+          </button>
+        </div>
       </header>
 
       <main className="app-main">{children}</main>
