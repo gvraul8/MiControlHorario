@@ -1,4 +1,4 @@
-import { doc, getDoc, onSnapshot, setDoc, type Unsubscribe } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, setDoc, updateDoc, type Unsubscribe } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import type { UserDocument, WorkEntry } from '../types';
 
@@ -39,16 +39,14 @@ export async function updateJobs(
   uid: string,
   jobs: UserDocument['jobs'],
 ): Promise<void> {
-  const current = await getUserDocument(uid);
-  if (!current) return;
-  await saveUserDocument(uid, { ...current, jobs });
+  // updateDoc sustituye el mapa entero. setDoc({ merge: true }) fusiona
+  // y deja las claves borradas o renombradas, así que el trabajo se duplica.
+  await updateDoc(doc(db, 'users', uid), { jobs });
 }
 
 export async function updateEntries(
   uid: string,
   entries: Record<string, WorkEntry[]>,
 ): Promise<void> {
-  const current = await getUserDocument(uid);
-  if (!current) return;
-  await saveUserDocument(uid, { ...current, entries });
+  await updateDoc(doc(db, 'users', uid), { entries });
 }
