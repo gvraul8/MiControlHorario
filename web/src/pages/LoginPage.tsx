@@ -2,27 +2,21 @@ import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import {
-  checkEmailRegistration,
   loginWithEmail,
   completeGoogleLinkWithPassword,
   formatAuthError,
   getPendingGoogleLinkRequest,
   loginWithGoogle,
   PendingGoogleLinkError,
-  registerWithEmail,
 } from '../services/authService';
 import { isFirebaseConfigured } from '../lib/firebase';
 import BrandMark from '../components/BrandMark';
 import GoogleIcon from '../components/GoogleIcon';
 
-type AuthMode = 'login' | 'register';
-
 export default function LoginPage() {
-  const { user, loading, acceptAuthenticatedUser } = useAuth();
+  const { user, loading } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [mode, setMode] = useState<AuthMode>('login');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
@@ -56,29 +50,10 @@ export default function LoginPage() {
     setSubmitting(true);
 
     try {
-      const nextMode = await checkEmailRegistration(email);
-      setMode(nextMode);
-
-      if (nextMode === 'register') {
-        if (!password) {
-          return;
-        }
-        if (password.length < 6) {
-          throw new Error('La contraseña debe tener al menos 6 caracteres.');
-        }
-        if (password !== confirmPassword) {
-          throw new Error('Las contraseñas no coinciden.');
-        }
-        const sessionUser = await registerWithEmail(email, password);
-        acceptAuthenticatedUser(sessionUser);
-        return;
-      }
-
       if (!password) {
         throw new Error('Introduce tu contraseña.');
       }
-      const sessionUser = await loginWithEmail(email, password);
-      acceptAuthenticatedUser(sessionUser);
+      await loginWithEmail(email, password);
     } catch (err) {
       setError(formatAuthError(err));
     } finally {
@@ -89,14 +64,8 @@ export default function LoginPage() {
   async function handleGoogleLogin() {
     setError(null);
     setGoogleBusy(true);
-    let awaitingRedirect = false;
     try {
-      const signedIn = await loginWithGoogle();
-      if (signedIn === null) {
-        awaitingRedirect = true;
-        return;
-      }
-      acceptAuthenticatedUser(signedIn);
+      await loginWithGoogle();
     } catch (err) {
       if (err instanceof PendingGoogleLinkError) {
         setGoogleLinkEmail(err.email);
@@ -106,9 +75,7 @@ export default function LoginPage() {
         setError(formatAuthError(err));
       }
     } finally {
-      if (!awaitingRedirect) {
-        setGoogleBusy(false);
-      }
+      setGoogleBusy(false);
     }
   }
 
@@ -117,8 +84,7 @@ export default function LoginPage() {
     setError(null);
     setSubmitting(true);
     try {
-      const sessionUser = await completeGoogleLinkWithPassword(linkPassword);
-      acceptAuthenticatedUser(sessionUser);
+      await completeGoogleLinkWithPassword(linkPassword);
     } catch (err) {
       setError(formatAuthError(err));
     } finally {
@@ -154,18 +120,11 @@ export default function LoginPage() {
             id="email"
             type="email"
             value={email}
-            onChange={(e) => {
-              setEmail(e.target.value);
-              setMode('login');
-            }}
+            onChange={(e) => setEmail(e.target.value)}
             placeholder="tu@empresa.com"
             required
             autoComplete="email"
           />
-
-          {mode === 'register' && (
-            <p className="info-text">Primera vez: crea tu contraseña para este email invitado.</p>
-          )}
 
           <label htmlFor="password">Contraseña</label>
           <input
@@ -173,32 +132,13 @@ export default function LoginPage() {
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder={mode === 'register' ? 'Mínimo 6 caracteres' : 'Tu contraseña'}
-            required={mode === 'register'}
-            autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+            placeholder="Tu contraseña"
+            required
+            autoComplete="current-password"
           />
 
-          {mode === 'register' && (
-            <>
-              <label htmlFor="confirmPassword">Confirmar contraseña</label>
-              <input
-                id="confirmPassword"
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Repite la contraseña"
-                required
-                autoComplete="new-password"
-              />
-            </>
-          )}
-
           <button type="submit" className="btn btn-primary" disabled={submitting}>
-            {submitting
-              ? 'Procesando...'
-              : mode === 'register'
-                ? 'Crear cuenta'
-                : 'Continuar con email'}
+            {submitting ? 'Entrando...' : 'Entrar'}
           </button>
         </form>
 
@@ -238,8 +178,8 @@ export default function LoginPage() {
         </button>
 
         <p className="login-hint">
-          Solo puedes entrar si tu administrador ha autorizado tu email. Email/contraseña y Google
-          pueden ser la misma cuenta: vincula el segundo método en Cuenta.
+          Solo puedes entrar si tu email está invitado. Si aún no tienes contraseña, entra con
+          Google y créala en Cuenta.
         </p>
       </div>
     </div>

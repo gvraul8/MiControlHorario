@@ -5,6 +5,7 @@ import {
   getLinkedMethodsFromUser,
   linkGoogleToAccount,
   linkPasswordToAccount,
+  changeAccountPassword,
   type LinkedAuthMethod,
 } from '../services/authService';
 import GoogleIcon from '../components/GoogleIcon';
@@ -14,6 +15,9 @@ export default function AccountPage() {
   const [methods, setMethods] = useState<LinkedAuthMethod[]>([]);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -71,6 +75,32 @@ export default function AccountPage() {
     }
   }
 
+  async function handleChangePassword(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setInfo(null);
+    if (newPassword.length < 6) {
+      setError('La contraseña nueva debe tener al menos 6 caracteres.');
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setError('Las contraseñas nuevas no coinciden.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await changeAccountPassword(currentUser, currentPassword, newPassword);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      setInfo('Contraseña actualizada.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo cambiar la contraseña.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleLinkGoogle() {
     setError(null);
     setInfo(null);
@@ -120,7 +150,10 @@ export default function AccountPage() {
 
       {!hasPassword && (
         <section className="card-panel">
-          <h2 className="section-title">Añadir contraseña</h2>
+          <h2 className="section-title">Crear contraseña</h2>
+          <p className="login-hint">
+            La contraseña se crea aquí. Después podrás entrar con email y contraseña.
+          </p>
           <form className="login-form" onSubmit={handleLinkPassword}>
             <label htmlFor="link-password">Nueva contraseña</label>
             <input
@@ -143,7 +176,47 @@ export default function AccountPage() {
               required
             />
             <button type="submit" className="btn btn-primary" disabled={busy}>
-              {busy ? 'Guardando…' : 'Vincular contraseña'}
+              {busy ? 'Guardando…' : 'Guardar contraseña'}
+            </button>
+          </form>
+        </section>
+      )}
+
+      {hasPassword && (
+        <section className="card-panel">
+          <h2 className="section-title">Cambiar contraseña</h2>
+          <form className="login-form" onSubmit={handleChangePassword}>
+            <label htmlFor="current-password">Contraseña actual</label>
+            <input
+              id="current-password"
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+            <label htmlFor="new-password">Nueva contraseña</label>
+            <input
+              id="new-password"
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              autoComplete="new-password"
+              minLength={6}
+              required
+            />
+            <label htmlFor="confirm-new-password">Confirmar nueva contraseña</label>
+            <input
+              id="confirm-new-password"
+              type="password"
+              value={confirmNewPassword}
+              onChange={(e) => setConfirmNewPassword(e.target.value)}
+              autoComplete="new-password"
+              minLength={6}
+              required
+            />
+            <button type="submit" className="btn btn-primary" disabled={busy}>
+              {busy ? 'Guardando…' : 'Actualizar contraseña'}
             </button>
           </form>
         </section>

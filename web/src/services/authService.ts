@@ -1,6 +1,5 @@
 import {
   browserLocalPersistence,
-  createUserWithEmailAndPassword,
   EmailAuthProvider,
   fetchSignInMethodsForEmail,
   getRedirectResult,
@@ -8,11 +7,12 @@ import {
   linkWithCredential,
   linkWithPopup,
   linkWithRedirect,
+  reauthenticateWithCredential,
   setPersistence,
   signInWithEmailAndPassword,
   signInWithPopup,
-  signInWithRedirect,
   signOut,
+  updatePassword,
   type AuthCredential,
   type AuthError,
   type User,
@@ -70,17 +70,6 @@ export function clearPendingGoogleLink(): void {
   pendingGoogleEmail = null;
 }
 
-let oauthPopupInProgress = false;
-
-/** Evita que onAuthStateChanged(null) del popup en desktop borre la sesión a medias. */
-export function isOAuthPopupInProgress(): boolean {
-  return oauthPopupInProgress;
-}
-
-function setOAuthPopupInProgress(active: boolean): void {
-  oauthPopupInProgress = active;
-}
-
 let lastValidatedSession: { uid: string; user: User; at: number } | null = null;
 const VALIDATED_SESSION_TTL_MS = 20_000;
 
@@ -88,19 +77,42 @@ export function clearValidatedSessionCache(): void {
   lastValidatedSession = null;
 }
 
-/** Una sola validación Firestore en paralelo; evita carreras popup + listener. */
-export async function finalizeLoginOnce(user: User): Promise<User> {
-  const now = Date.now();
+let finalizeInflight: Promise<User> | null = null;
+let finalizeInflightUid: string | null = null;
+
+export function getCachedValidatedUser(uid: string): User | null {
   if (
     lastValidatedSession &&
-    lastValidatedSession.uid === user.uid &&
-    now - lastValidatedSession.at < VALIDATED_SESSION_TTL_MS
+    lastValidatedSession.uid === uid &&
+    Date.now() - lastValidatedSession.at < VALIDATED_SESSION_TTL_MS
   ) {
     return lastValidatedSession.user;
   }
-  const validated = await finalizeLogin(user);
-  lastValidatedSession = { uid: validated.uid, user: validated, at: Date.now() };
-  return validated;
+  return null;
+}
+
+function rememberValidatedUser(user: User): User {
+  lastValidatedSession = { uid: user.uid, user, at: Date.now() };
+  return user;
+}
+
+/** Una sola validación Firestore en paralelo; evita carreras popup + listener. */
+export async function finalizeLoginOnce(user: User): Promise<User> {
+  const cached = getCachedValidatedUser(user.uid);
+  if (cached) {
+    return cached;
+  }
+  if (finalizeInflight && finalizeInflightUid === user.uid) {
+    return finalizeInflight;
+  }
+  finalizeInflightUid = user.uid;
+  finalizeInflight = finalizeLogin(user)
+    .then(rememberValidatedUser)
+    .finally(() => {
+      finalizeInflight = null;
+      finalizeInflightUid = null;
+    });
+  return finalizeInflight;
 }
 
 let persistenceReady = false;
@@ -123,14 +135,9 @@ async function ensurePersistence() {
   await initAuthPersistence();
 }
 
-async function ensureAuthReady(user: User): Promise<void> {
-  await auth.authStateReady();
-  await user.getIdToken(true);
-}
-
 /**
- * Safari en pestaña: redirect. Acceso directo (PWA): popup — el redirect en iOS standalone
- * suele perder la sesión al volver y deja el botón en "Procesando".
+ * Safari en pestaña: redirect. Acceso directo (PWA): popup.
+ * El login usa siempre popup: el redirect en iOS dejaba la sesión a medias.
  */
 export function preferGoogleRedirect(): boolean {
   if (isStandalonePwa()) return false;
@@ -194,32 +201,14 @@ async function finalizeLogin(user: User): Promise<User> {
     throw new Error('Tu cuenta no tiene email asociado.');
   }
 
-  try {
-    await ensureAuthReady(user);
-    const allowed = await isEmailAllowed(email);
-    if (!allowed) {
-      await signOut(auth);
-      throw new Error('Acceso no autorizado. Contacta con tu administrador para recibir una invitación.');
-    }
-
-    await ensureUserDocument(user);
-    return user;
-  } catch (err) {
-    const code = getAuthErrorCode(err);
-    if (code === 'permission-denied') {
-      await signOut(auth);
-      throw new Error(
-        'No se pudo comprobar tu invitación (permisos Firestore). Usa el mismo email que te invitaron o contacta con el administrador.',
-      );
-    }
-    throw err;
+  const allowed = await isEmailAllowed(email);
+  if (!allowed) {
+    await signOut(auth);
+    throw new Error('Acceso no autorizado. Contacta con tu administrador para recibir una invitación.');
   }
-}
 
-export async function checkEmailRegistration(email: string): Promise<'login' | 'register'> {
-  const normalized = normalizeEmail(email);
-  const methods = await fetchSignInMethodsForEmail(auth, normalized);
-  return methods.length > 0 ? 'login' : 'register';
+  await ensureUserDocument(user);
+  return user;
 }
 
 export async function loginWithEmail(email: string, password: string): Promise<User> {
@@ -229,32 +218,9 @@ export async function loginWithEmail(email: string, password: string): Promise<U
   return finalizeLoginOnce(credential.user);
 }
 
-export async function registerWithEmail(email: string, password: string): Promise<User> {
-  await ensurePersistence();
-  const normalized = normalizeEmail(email);
-
-  try {
-    const credential = await createUserWithEmailAndPassword(auth, normalized, password);
-    return finalizeLoginOnce(credential.user);
-  } catch (err) {
-    if (getAuthErrorCode(err) === 'auth/email-already-in-use') {
-      throw new Error(
-        'Ya hay una cuenta con este email (por ejemplo con Google). Entra con ese método o vincula contraseña en Cuenta.',
-      );
-    }
-    throw err;
-  }
-}
-
-/** En iOS usa redirect (navega a Google y vuelve). En desktop, popup. Redirect devuelve null. */
+/** Popup en todos los dispositivos (el redirect rompía la sesión al volver). */
 export async function loginWithGoogle(): Promise<User | null> {
-  if (preferGoogleRedirect()) {
-    await ensurePersistence();
-    await signInWithRedirect(auth, googleProvider);
-    return null;
-  }
   await ensurePersistence();
-  setOAuthPopupInProgress(true);
   try {
     const credential = await signInWithPopup(auth, googleProvider);
     clearPendingGoogleLink();
@@ -264,8 +230,6 @@ export async function loginWithGoogle(): Promise<User | null> {
       throw new PendingGoogleLinkError(pendingGoogleEmail!);
     }
     throw err;
-  } finally {
-    setOAuthPopupInProgress(false);
   }
 }
 
@@ -323,6 +287,38 @@ export async function linkPasswordToAccount(user: User, password: string): Promi
   }
 }
 
+export async function changeAccountPassword(
+  user: User,
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  if (newPassword.length < 6) {
+    throw new Error('La contraseña nueva debe tener al menos 6 caracteres.');
+  }
+  if (currentPassword === newPassword) {
+    throw new Error('La contraseña nueva tiene que ser distinta de la actual.');
+  }
+  const email = user.email;
+  if (!email) {
+    throw new Error('Tu cuenta no tiene email.');
+  }
+  await ensurePersistence();
+  const credential = EmailAuthProvider.credential(normalizeEmail(email), currentPassword);
+  try {
+    await reauthenticateWithCredential(user, credential);
+    await updatePassword(user, newPassword);
+  } catch (err) {
+    const code = getAuthErrorCode(err);
+    if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
+      throw new Error('La contraseña actual no es correcta.');
+    }
+    if (code === 'auth/requires-recent-login') {
+      throw new Error('Vuelve a entrar e inténtalo de nuevo.');
+    }
+    throw err;
+  }
+}
+
 /** Vincula Google a la sesión actual. Redirect devuelve null (la página se recarga). */
 export async function linkGoogleToAccount(user: User): Promise<User | null> {
   await ensurePersistence();
@@ -356,8 +352,11 @@ export function formatAuthError(err: unknown): string {
   if (code === 'auth/popup-closed-by-user') {
     return 'Has cerrado el inicio de sesión con Google.';
   }
+  if (code === 'auth/user-not-found') {
+    return 'Esta cuenta aún no tiene contraseña. Entra con Google y créala en Cuenta.';
+  }
   if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
-    return 'Contraseña incorrecta.';
+    return 'Email o contraseña incorrectos. Si es la primera vez, entra con Google y crea la contraseña en Cuenta.';
   }
   if (code === 'auth/email-already-in-use') {
     return 'Este email ya tiene cuenta. Entra con Google o con tu contraseña.';
@@ -382,32 +381,11 @@ export async function logout(): Promise<void> {
   await signOut(auth);
 }
 
-function isTransientValidationError(err: unknown): boolean {
-  const code =
-    err && typeof err === 'object' && 'code' in err ? String((err as { code: string }).code) : '';
-  return (
-    code === 'unavailable' ||
-    code === 'deadline-exceeded' ||
-    code === 'failed-precondition' ||
-    code === 'auth/network-request-failed'
-  );
-}
-
-/** Restaura sesión guardada (persistencia local) sin pedir login en cada apertura. */
+/** Restaura sesión guardada. Un solo finalizeLogin (como en la versión que funcionaba). */
 export async function validateExistingSession(user: User): Promise<User | null> {
   try {
     return await finalizeLoginOnce(user);
-  } catch (err) {
-    if (isTransientValidationError(err)) {
-      return user;
-    }
-    if (
-      lastValidatedSession &&
-      lastValidatedSession.uid === user.uid &&
-      Date.now() - lastValidatedSession.at < VALIDATED_SESSION_TTL_MS
-    ) {
-      return lastValidatedSession.user;
-    }
+  } catch {
     return null;
   }
 }
