@@ -6,10 +6,13 @@ service cloud.firestore {
       return request.auth != null && request.auth.token.email != null;
     }
 
+    function inviteEmailMatches(email) {
+      return isSignedIn() && lower(request.auth.token.email) == lower(email);
+    }
+
     match /allowedEmails/{email} {
-      allow read: if isSignedIn() && lower(request.auth.token.email) == email;
-      allow update: if isSignedIn()
-        && lower(request.auth.token.email) == email
+      allow read: if inviteEmailMatches(email);
+      allow update: if inviteEmailMatches(email)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
         && request.resource.data.status == 'active';
       allow create, delete: if false;

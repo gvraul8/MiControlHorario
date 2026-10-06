@@ -78,7 +78,7 @@ export default function LoginPage() {
       }
       await loginWithEmail(email, password);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al iniciar sesión');
+      setError(formatAuthError(err));
     } finally {
       setSubmitting(false);
     }

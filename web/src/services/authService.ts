@@ -150,23 +150,29 @@ async function finalizeLogin(user: User): Promise<User> {
     throw new Error('Tu cuenta no tiene email asociado.');
   }
 
-  const allowed = await isEmailAllowed(email);
-  if (!allowed) {
-    await signOut(auth);
-    throw new Error('Acceso no autorizado. Contacta con tu administrador para recibir una invitación.');
-  }
+  try {
+    const allowed = await isEmailAllowed(email);
+    if (!allowed) {
+      await signOut(auth);
+      throw new Error('Acceso no autorizado. Contacta con tu administrador para recibir una invitación.');
+    }
 
-  await ensureUserDocument(user);
-  return user;
+    await ensureUserDocument(user);
+    return user;
+  } catch (err) {
+    const code = getAuthErrorCode(err);
+    if (code === 'permission-denied') {
+      await signOut(auth);
+      throw new Error(
+        'No se pudo comprobar tu invitación (permisos Firestore). Usa el mismo email que te invitaron o contacta con el administrador.',
+      );
+    }
+    throw err;
+  }
 }
 
 export async function checkEmailRegistration(email: string): Promise<'login' | 'register'> {
   const normalized = normalizeEmail(email);
-  const allowed = await isEmailAllowed(normalized);
-  if (!allowed) {
-    throw new Error('Este email no está invitado. Contacta con tu administrador.');
-  }
-
   const methods = await fetchSignInMethodsForEmail(auth, normalized);
   return methods.length > 0 ? 'login' : 'register';
 }
@@ -181,10 +187,6 @@ export async function loginWithEmail(email: string, password: string): Promise<U
 export async function registerWithEmail(email: string, password: string): Promise<User> {
   await ensurePersistence();
   const normalized = normalizeEmail(email);
-  const allowed = await isEmailAllowed(normalized);
-  if (!allowed) {
-    throw new Error('Este email no está invitado. Contacta con tu administrador.');
-  }
 
   try {
     const credential = await createUserWithEmailAndPassword(auth, normalized, password);
@@ -312,7 +314,19 @@ export function formatAuthError(err: unknown): string {
   if (code === 'auth/email-already-in-use') {
     return 'Este email ya tiene cuenta. Entra con Google o con tu contraseña.';
   }
+  if (code === 'permission-denied' || code === 'PERMISSION_DENIED') {
+    return 'Permiso denegado al validar tu invitación. Comprueba que usas el email invitado o contacta con el administrador.';
+  }
   return err instanceof Error ? err.message : 'Error al iniciar sesión';
+}
+
+export function formatFirestoreError(err: unknown): string {
+  const code =
+    err && typeof err === 'object' && 'code' in err ? String((err as { code: string }).code) : '';
+  if (code === 'permission-denied') {
+    return 'Missing or insufficient permissions. Vuelve a entrar; si sigue, el administrador debe desplegar las reglas de Firestore.';
+  }
+  return err instanceof Error ? err.message : 'Error de datos';
 }
 
 export async function logout(): Promise<void> {
