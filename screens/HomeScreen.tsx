@@ -126,7 +126,7 @@ export default function HomeScreen({ }) {
 
   const handleGeneratePDF = async () => {
     try {
-      await generateStyledPDF(entries, selectedYear, selectedMonth, userName);
+      await generateStyledPDF(entries, selectedYear, selectedMonth, userName, jobList);
     } catch (e) {
       Alert.alert('Error al generar PDF', String(e));
     }

@@ -6,21 +6,38 @@ interface WorkEntry {
   hours: number;
 }
 
-type WorkData = Record<string, WorkEntry[]>;
+interface JobData {
+  rate: number;
+}
 
-export async function generateStyledPDF(entries: WorkData, year: number, month: number, userName: string) {
+type WorkData = Record<string, WorkEntry[]>;
+type JobMap = Record<string, JobData>;
+
+export async function generateStyledPDF(entries: WorkData, year: number, month: number, userName: string, jobList: JobMap) {
   const monthNames = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
   const monthString = String(month + 1).padStart(2, '0');
   const title = `${monthNames[month]} ${year}`;
 
   // --- Calculate Job Summary ---
-  const jobSummary: Record<string, number> = {};
+  const jobSummary: Record<string, { hours: number, money: number }> = {};
   let totalHours = 0;
+  let totalMoney = 0;
+
   Object.entries(entries).forEach(([date, dayEntries]) => {
     if (date.startsWith(`${year}-${monthString}`)) {
       dayEntries.forEach(entry => {
-        jobSummary[entry.job] = (jobSummary[entry.job] || 0) + entry.hours;
+        const rate = jobList[entry.job]?.rate || 0;
+        const money = entry.hours * rate;
+        
+        if (!jobSummary[entry.job]) {
+          jobSummary[entry.job] = { hours: 0, money: 0 };
+        }
+        
+        jobSummary[entry.job].hours += entry.hours;
+        jobSummary[entry.job].money += money;
+        
         totalHours += entry.hours;
+        totalMoney += money;
       });
     }
   });
@@ -31,7 +48,7 @@ export async function generateStyledPDF(entries: WorkData, year: number, month: 
     data: {
       labels: Object.keys(jobSummary),
       datasets: [{
-        data: Object.values(jobSummary),
+        data: Object.values(jobSummary).map(j => j.hours),
         backgroundColor: ['#2563eb', '#10b981', '#6366f1', '#f59e42', '#ef4444', '#fbbf24']
       }]
     },
@@ -45,10 +62,11 @@ export async function generateStyledPDF(entries: WorkData, year: number, month: 
 
   // --- Generate Job Summary HTML ---
   let summaryHtml = '<div class="summary"><h2>Resumen Mensual</h2>';
-  summaryHtml += `<div style="font-size: 18px; margin-bottom: 15px; color: #2563eb;"><strong>Total Horas Trabajadas:</strong> ${totalHours.toFixed(2)}h</div>`;
+  summaryHtml += `<div style="font-size: 18px; margin-bottom: 5px; color: #2563eb;"><strong>Total Horas Trabajadas:</strong> ${totalHours.toFixed(2)}h</div>`;
+  summaryHtml += `<div style="font-size: 18px; margin-bottom: 15px; color: #10b981;"><strong>Total Ganado:</strong> ${totalMoney.toFixed(2)} €</div>`;
   summaryHtml += '<h3>Desglose por Trabajo</h3><ul>';
-  for (const [job, hours] of Object.entries(jobSummary)) {
-    summaryHtml += `<li><strong>${job}:</strong> ${hours.toFixed(2)} horas</li>`;
+  for (const [job, data] of Object.entries(jobSummary)) {
+    summaryHtml += `<li><strong>${job}:</strong> ${data.hours.toFixed(2)} horas - ${data.money.toFixed(2)} €</li>`;
   }
   summaryHtml += '</ul>';
   summaryHtml += `<div style="display:flex; justify-content:center; margin-top:20px;"><img src="${chartUrl}" width="500" height="300" /></div>`;
