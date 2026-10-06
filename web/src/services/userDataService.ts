@@ -50,3 +50,12 @@ export async function updateEntries(
 ): Promise<void> {
   await updateDoc(doc(db, 'users', uid), { entries });
 }
+
+/** Sustituye trabajos y horas a la vez (borrar un trabajo y sus registros). */
+export async function updateJobsAndEntries(
+  uid: string,
+  jobs: UserDocument['jobs'],
+  entries: Record<string, WorkEntry[]>,
+): Promise<void> {
+  await updateDoc(doc(db, 'users', uid), { jobs, entries });
+}

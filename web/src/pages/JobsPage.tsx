@@ -1,6 +1,34 @@
 import { useState } from 'react';
 import { useUserData } from '../hooks/useUserData';
-import { updateJobs } from '../services/userDataService';
+import { updateJobs, updateJobsAndEntries } from '../services/userDataService';
+
+function countJobUsage(
+  entries: Record<string, { job: string; hours: number }[]>,
+  job: string,
+) {
+  let count = 0;
+  let hours = 0;
+  for (const day of Object.values(entries)) {
+    for (const entry of day) {
+      if (entry.job !== job) continue;
+      count += 1;
+      hours += entry.hours;
+    }
+  }
+  return { count, hours };
+}
+
+function entriesWithoutJob(
+  entries: Record<string, { job: string; hours: number }[]>,
+  job: string,
+) {
+  const next: typeof entries = {};
+  for (const [date, day] of Object.entries(entries)) {
+    const kept = day.filter((entry) => entry.job !== job);
+    if (kept.length > 0) next[date] = kept;
+  }
+  return next;
+}
 
 export default function JobsPage() {
   const { data, loading, uid } = useUserData();
@@ -9,8 +37,11 @@ export default function JobsPage() {
   const [editingJob, setEditingJob] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   const jobList = data?.jobs ?? {};
+  const entries = data?.entries ?? {};
+  const pendingUsage = pendingDelete ? countJobUsage(entries, pendingDelete) : null;
 
   async function persistJobs(updated: typeof jobList) {
     if (!uid) return;
@@ -51,10 +82,39 @@ export default function JobsPage() {
     setRate(jobList[job].rate.toString());
   }
 
-  async function deleteJob(job: string) {
+  function requestDeleteJob(job: string) {
+    const usage = countJobUsage(entries, job);
+    if (usage.count > 0) {
+      setPendingDelete(job);
+      return;
+    }
+    void removeJob(job);
+  }
+
+  async function removeJob(job: string) {
+    if (!uid) return;
     const updated = { ...jobList };
     delete updated[job];
-    await persistJobs(updated);
+    const usage = countJobUsage(entries, job);
+    setSaving(true);
+    try {
+      if (usage.count > 0) {
+        await updateJobsAndEntries(uid, updated, entriesWithoutJob(entries, job));
+      } else {
+        await updateJobs(uid, updated);
+      }
+      if (editingJob === job) {
+        setEditingJob(null);
+        setNewJob('');
+        setRate('');
+      }
+      setPendingDelete(null);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al eliminar');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function confirmEditJob() {
@@ -97,7 +157,7 @@ export default function JobsPage() {
               <button type="button" className="link-btn" onClick={() => startEditJob(job)}>
                 Editar
               </button>
-              <button type="button" className="link-btn danger" onClick={() => deleteJob(job)}>
+              <button type="button" className="link-btn danger" onClick={() => requestDeleteJob(job)}>
                 Eliminar
               </button>
             </div>
@@ -151,6 +211,44 @@ export default function JobsPage() {
           </button>
         )}
       </section>
+
+      {pendingDelete && pendingUsage && pendingUsage.count > 0 && (
+        <div className="modal-overlay" role="presentation">
+          <div className="modal modal-attention" role="dialog" aria-modal="true" aria-labelledby="delete-job-title">
+            <p id="delete-job-title" className="attention-title">
+              ⚠️ ATENCIÓN ⚠️
+            </p>
+            <p>
+              <strong>«{pendingDelete}»</strong> tiene{' '}
+              {pendingUsage.count === 1
+                ? '1 registro'
+                : `${pendingUsage.count} registros`}{' '}
+              ({pendingUsage.hours.toLocaleString('es-ES', { maximumFractionDigits: 2 })} h).
+            </p>
+            <p className="attention-warning">
+              Si lo eliminas, se borran también esas horas. Esta acción no se puede deshacer.
+            </p>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setPendingDelete(null)}
+                disabled={saving}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={() => void removeJob(pendingDelete)}
+                disabled={saving}
+              >
+                {saving ? 'Eliminando...' : 'Eliminar trabajo y horas'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

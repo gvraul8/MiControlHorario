@@ -723,6 +723,29 @@ h1.brand-mark-title-hero {
   color: var(--brand-navy);
 }
 
+.modal-attention {
+  border: 2px solid #c0392b;
+  box-shadow: 0 12px 40px rgba(192, 57, 43, 0.25);
+}
+
+.attention-title {
+  margin: 0 0 12px;
+  text-align: center;
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #b42318;
+}
+
+.attention-warning {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(192, 57, 43, 0.1);
+  color: #8f1d14;
+  font-weight: 600;
+}
+
 .modal select {
   width: 100%;
   padding: 11px 14px;
