@@ -70,23 +70,75 @@ npm run dev
 
 Abre http://localhost:5173
 
-## Build y despliegue
+## Despliegue desde GitHub (recomendado)
+
+Tu PC **no actúa como servidor**: GitHub Actions compila la app y publica en **Firebase Hosting** (Google). Solo necesitas configurarlo **una vez**; después, cada `git push` a `develop` o `main` (con cambios en `web/`) despliega solo.
+
+Workflow: `.github/workflows/deploy-web.yml`
+
+### 1. Cuenta de servicio para CI (una vez)
+
+1. Abre [Google Cloud Console](https://console.cloud.google.com/) → el proyecto vinculado a tu Firebase.
+2. **IAM y administración** → **Cuentas de servicio** → **Crear cuenta de servicio** (nombre ej. `github-deploy`).
+3. Asigna estos roles (mínimo):
+   - **Firebase Hosting Admin**
+   - **Cloud Datastore User** (para desplegar reglas de Firestore)
+4. En la cuenta creada → **Claves** → **Añadir clave** → **JSON** → descarga el archivo (guárdalo en sitio seguro, no lo subas al repo).
+
+### 2. Secrets en GitHub (una vez)
+
+Repo en GitHub → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**.
+
+Crea estos secrets (los mismos valores que en tu `web/.env` local):
+
+| Secret | Contenido |
+|--------|-----------|
+| `VITE_FIREBASE_API_KEY` | apiKey |
+| `VITE_FIREBASE_AUTH_DOMAIN` | authDomain |
+| `VITE_FIREBASE_PROJECT_ID` | projectId |
+| `VITE_FIREBASE_STORAGE_BUCKET` | storageBucket |
+| `VITE_FIREBASE_MESSAGING_SENDER_ID` | messagingSenderId |
+| `VITE_FIREBASE_APP_ID` | appId |
+| `FIREBASE_SERVICE_ACCOUNT` | **Todo el JSON** de la clave de la cuenta de servicio (pegar el contenido completo) |
+
+El `projectId` debe coincidir con `web/.firebaserc` (`default`).
+
+### 3. Publicar el workflow
+
+Sube el repo (incluye `.github/workflows/deploy-web.yml`):
 
 ```bash
+git push origin develop
+```
+
+En GitHub → pestaña **Actions** verás el job **Deploy Web to Firebase**. Si termina en verde, la app está en:
+
+`https://<VITE_FIREBASE_PROJECT_ID>.web.app`
+
+También puedes lanzarlo a mano: **Actions** → **Deploy Web to Firebase** → **Run workflow**.
+
+### 4. Después del primer deploy
+
+- **Authentication → Authorized domains**: añade `tu-proyecto.web.app` y `tu-proyecto.firebaseapp.com`.
+- Invitaciones en Firestore (`allowedEmails`) siguen siendo las mismas que en local.
+
+### Dominio propio (ej. `horario.gvraul.com`)
+
+Firebase Console → **Hosting** → **Add custom domain** → DNS en tu registrador. Luego añade ese dominio en **Authorized domains**.
+
+---
+
+## Build y despliegue manual (opcional)
+
+Desde tu PC, solo si quieres probar el deploy sin GitHub:
+
+```bash
+cd web
 npm run build
 npm run firebase:deploy
 ```
 
-La primera vez (usa la CLI `firebase-tools`, no el paquete `firebase` del SDK):
-
-```bash
-cd web
-npm install
-npm run firebase:login
-npx firebase use --add
-```
-
-Copia `.firebaserc.example` a `.firebaserc` si aún no lo tienes. Selecciona tu proyecto Firebase.
+La primera vez: `npm run firebase:login` y `.firebaserc` apuntando a tu proyecto.
 
 ## Instalar como app (PWA)
 
