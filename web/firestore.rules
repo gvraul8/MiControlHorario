@@ -3,15 +3,24 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function isSignedIn() {
-      return request.auth != null && request.auth.token.email != null;
+      return request.auth != null;
+    }
+
+    function authEmailLower() {
+      return isSignedIn() && request.auth.token.email != null
+        ? request.auth.token.email.lower()
+        : '';
     }
 
     function inviteEmailMatches(email) {
-      return isSignedIn() && lower(request.auth.token.email) == lower(email);
+      return authEmailLower() != '' && authEmailLower() == email.lower();
     }
 
     match /allowedEmails/{email} {
-      allow read: if inviteEmailMatches(email);
+      // get: usuario autenticado comprueba su invitación por id (email en minúsculas).
+      // list: cerrado (no enumerar invitados).
+      allow get: if isSignedIn();
+      allow list: if false;
       allow update: if inviteEmailMatches(email)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
         && request.resource.data.status == 'active';

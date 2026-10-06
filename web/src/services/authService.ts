@@ -70,6 +70,39 @@ export function clearPendingGoogleLink(): void {
   pendingGoogleEmail = null;
 }
 
+let oauthPopupInProgress = false;
+
+/** Evita que onAuthStateChanged(null) del popup en desktop borre la sesión a medias. */
+export function isOAuthPopupInProgress(): boolean {
+  return oauthPopupInProgress;
+}
+
+function setOAuthPopupInProgress(active: boolean): void {
+  oauthPopupInProgress = active;
+}
+
+let lastValidatedSession: { uid: string; user: User; at: number } | null = null;
+const VALIDATED_SESSION_TTL_MS = 20_000;
+
+export function clearValidatedSessionCache(): void {
+  lastValidatedSession = null;
+}
+
+/** Una sola validación Firestore en paralelo; evita carreras popup + listener. */
+export async function finalizeLoginOnce(user: User): Promise<User> {
+  const now = Date.now();
+  if (
+    lastValidatedSession &&
+    lastValidatedSession.uid === user.uid &&
+    now - lastValidatedSession.at < VALIDATED_SESSION_TTL_MS
+  ) {
+    return lastValidatedSession.user;
+  }
+  const validated = await finalizeLogin(user);
+  lastValidatedSession = { uid: validated.uid, user: validated, at: Date.now() };
+  return validated;
+}
+
 let persistenceReady = false;
 let persistenceInit: Promise<void> | null = null;
 
@@ -90,6 +123,11 @@ async function ensurePersistence() {
   await initAuthPersistence();
 }
 
+async function ensureAuthReady(user: User): Promise<void> {
+  await auth.authStateReady();
+  await user.getIdToken(true);
+}
+
 /**
  * Safari en pestaña: redirect. Acceso directo (PWA): popup — el redirect en iOS standalone
  * suele perder la sesión al volver y deja el botón en "Procesando".
@@ -103,7 +141,7 @@ export async function completeGoogleRedirectIfNeeded(): Promise<void> {
   try {
     const result = await getRedirectResult(auth);
     if (result?.user) {
-      await finalizeLogin(result.user);
+      await finalizeLoginOnce(result.user);
     }
   } catch (err) {
     if (stashPendingGoogleLink(err)) {
@@ -124,7 +162,13 @@ export async function markInviteActive(email: string): Promise<void> {
   const ref = doc(db, 'allowedEmails', normalized);
   const snap = await getDoc(ref);
   if (snap.exists() && snap.data()?.status === 'pending') {
-    await updateDoc(ref, { status: 'active' });
+    try {
+      await updateDoc(ref, { status: 'active' });
+    } catch (err) {
+      if (getAuthErrorCode(err) !== 'permission-denied') {
+        throw err;
+      }
+    }
   }
 }
 
@@ -151,6 +195,7 @@ async function finalizeLogin(user: User): Promise<User> {
   }
 
   try {
+    await ensureAuthReady(user);
     const allowed = await isEmailAllowed(email);
     if (!allowed) {
       await signOut(auth);
@@ -181,7 +226,7 @@ export async function loginWithEmail(email: string, password: string): Promise<U
   await ensurePersistence();
   const normalized = normalizeEmail(email);
   const credential = await signInWithEmailAndPassword(auth, normalized, password);
-  return finalizeLogin(credential.user);
+  return finalizeLoginOnce(credential.user);
 }
 
 export async function registerWithEmail(email: string, password: string): Promise<User> {
@@ -190,7 +235,7 @@ export async function registerWithEmail(email: string, password: string): Promis
 
   try {
     const credential = await createUserWithEmailAndPassword(auth, normalized, password);
-    return finalizeLogin(credential.user);
+    return finalizeLoginOnce(credential.user);
   } catch (err) {
     if (getAuthErrorCode(err) === 'auth/email-already-in-use') {
       throw new Error(
@@ -209,15 +254,18 @@ export async function loginWithGoogle(): Promise<User | null> {
     return null;
   }
   await ensurePersistence();
+  setOAuthPopupInProgress(true);
   try {
     const credential = await signInWithPopup(auth, googleProvider);
     clearPendingGoogleLink();
-    return finalizeLogin(credential.user);
+    return await finalizeLoginOnce(credential.user);
   } catch (err) {
     if (stashPendingGoogleLink(err)) {
       throw new PendingGoogleLinkError(pendingGoogleEmail!);
     }
     throw err;
+  } finally {
+    setOAuthPopupInProgress(false);
   }
 }
 
@@ -232,7 +280,7 @@ export async function completeGoogleLinkWithPassword(password: string): Promise<
   const linked = await linkWithCredential(userCredential.user, pendingGoogleCredential);
   clearPendingGoogleLink();
   await linked.user.reload();
-  return finalizeLogin(linked.user);
+  return finalizeLoginOnce(linked.user);
 }
 
 export type LinkedAuthMethod = 'google' | 'password';
@@ -330,6 +378,7 @@ export function formatFirestoreError(err: unknown): string {
 }
 
 export async function logout(): Promise<void> {
+  clearValidatedSessionCache();
   await signOut(auth);
 }
 
@@ -347,10 +396,17 @@ function isTransientValidationError(err: unknown): boolean {
 /** Restaura sesión guardada (persistencia local) sin pedir login en cada apertura. */
 export async function validateExistingSession(user: User): Promise<User | null> {
   try {
-    return await finalizeLogin(user);
+    return await finalizeLoginOnce(user);
   } catch (err) {
     if (isTransientValidationError(err)) {
       return user;
+    }
+    if (
+      lastValidatedSession &&
+      lastValidatedSession.uid === user.uid &&
+      Date.now() - lastValidatedSession.at < VALIDATED_SESSION_TTL_MS
+    ) {
+      return lastValidatedSession.user;
     }
     return null;
   }

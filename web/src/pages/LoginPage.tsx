@@ -18,7 +18,7 @@ import GoogleIcon from '../components/GoogleIcon';
 type AuthMode = 'login' | 'register';
 
 export default function LoginPage() {
-  const { user, loading } = useAuth();
+  const { user, loading, acceptAuthenticatedUser } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -69,14 +69,16 @@ export default function LoginPage() {
         if (password !== confirmPassword) {
           throw new Error('Las contraseñas no coinciden.');
         }
-        await registerWithEmail(email, password);
+        const sessionUser = await registerWithEmail(email, password);
+        acceptAuthenticatedUser(sessionUser);
         return;
       }
 
       if (!password) {
         throw new Error('Introduce tu contraseña.');
       }
-      await loginWithEmail(email, password);
+      const sessionUser = await loginWithEmail(email, password);
+      acceptAuthenticatedUser(sessionUser);
     } catch (err) {
       setError(formatAuthError(err));
     } finally {
@@ -94,6 +96,7 @@ export default function LoginPage() {
         awaitingRedirect = true;
         return;
       }
+      acceptAuthenticatedUser(signedIn);
     } catch (err) {
       if (err instanceof PendingGoogleLinkError) {
         setGoogleLinkEmail(err.email);
@@ -114,7 +117,8 @@ export default function LoginPage() {
     setError(null);
     setSubmitting(true);
     try {
-      await completeGoogleLinkWithPassword(linkPassword);
+      const sessionUser = await completeGoogleLinkWithPassword(linkPassword);
+      acceptAuthenticatedUser(sessionUser);
     } catch (err) {
       setError(formatAuthError(err));
     } finally {
