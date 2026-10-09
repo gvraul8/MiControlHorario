@@ -3,7 +3,8 @@ import { DayPicker } from 'react-day-picker';
 import { es } from 'date-fns/locale';
 import { useUserData } from '../hooks/useUserData';
 import { updateEntries, updateProfile } from '../services/userDataService';
-import { generateStyledPDF } from '../utils/generatePDF';
+import ReportPreviewModal from '../components/ReportPreviewModal';
+import { buildMonthlyReportHtml, monthlyReportFileBaseName } from '../utils/generatePDF';
 import { parseMonthKey } from '../utils/dateHelpers';
 import {
   DURATION_MINUTES,
@@ -37,6 +38,9 @@ export default function CalendarPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [reportPreviewOpen, setReportPreviewOpen] = useState(false);
+  const [reportHtml, setReportHtml] = useState<string | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
 
   const entries = data?.entries ?? {};
   const jobList = data?.jobs ?? {};
@@ -149,20 +153,35 @@ export default function CalendarPage() {
     setIsEditingName(false);
   }
 
+  function closeReportPreview() {
+    setReportPreviewOpen(false);
+    setReportHtml(null);
+    setReportLoading(false);
+  }
+
   async function handleGeneratePDF() {
     setPageError(null);
+    const year = selectedMonth.getFullYear();
+    const month = selectedMonth.getMonth();
+    setReportPreviewOpen(true);
+    setReportHtml(null);
+    setReportLoading(true);
     try {
-      await generateStyledPDF(
-        entries,
-        selectedMonth.getFullYear(),
-        selectedMonth.getMonth(),
-        userName,
-        jobList,
-      );
+      const html = await buildMonthlyReportHtml(entries, year, month, userName, jobList);
+      setReportHtml(html);
     } catch (err) {
+      closeReportPreview();
       setPageError(err instanceof Error ? err.message : 'Error al generar PDF');
+    } finally {
+      setReportLoading(false);
     }
   }
+
+  const reportTitle = `Informe ${monthKey}`;
+  const reportFileBaseName = monthlyReportFileBaseName(
+    selectedMonth.getFullYear(),
+    selectedMonth.getMonth(),
+  );
 
   if (loading) {
     return <div className="page-loading">Cargando datos...</div>;
@@ -217,7 +236,7 @@ export default function CalendarPage() {
       {pageError && <p className="error-text">{pageError}</p>}
 
       <button type="button" className="btn btn-primary btn-block" onClick={handleGeneratePDF}>
-        Descargar PDF
+        Informe en PDF
       </button>
 
       <section className="card summary-card">
@@ -233,6 +252,16 @@ export default function CalendarPage() {
           </div>
         </div>
       </section>
+
+      {reportPreviewOpen && (
+        <ReportPreviewModal
+          title={reportTitle}
+          html={reportHtml}
+          loading={reportLoading}
+          fileBaseName={reportFileBaseName}
+          onClose={closeReportPreview}
+        />
+      )}
 
       {modalOpen && selectedDate && (
         <div className="modal-overlay" onClick={() => setModalOpen(false)}>

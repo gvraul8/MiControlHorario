@@ -248,28 +248,27 @@ function monthHasEntries(entries: WorkData, year: number, month: number): boolea
   );
 }
 
-export async function generateStyledPDF(
+const MONTH_NAMES_FILE = [
+  'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+];
+
+export function monthlyReportFileBaseName(year: number, month: number): string {
+  const monthLabel = MONTH_NAMES_FILE[month] ?? String(month + 1);
+  return `mi-control-horario-${monthLabel}-${year}`;
+}
+
+export async function buildMonthlyReportHtml(
   entries: WorkData,
   year: number,
   month: number,
   userName: string,
   jobList: JobMap,
-): Promise<void> {
+): Promise<string> {
   if (!monthHasEntries(entries, year, month)) {
     throw new Error('No hay registros en el mes seleccionado');
   }
 
   const branding = await loadPdfBrandingImages();
-  const html = buildReportHtml(entries, year, month, userName, jobList, branding);
-  const printWindow = window.open('', '_blank');
-  if (!printWindow) {
-    throw new Error('No se pudo abrir la ventana de impresión. Permite ventanas emergentes.');
-  }
-
-  printWindow.document.write(html);
-  printWindow.document.close();
-  printWindow.onload = () => {
-    printWindow.focus();
-    printWindow.print();
-  };
+  return buildReportHtml(entries, year, month, userName, jobList, branding);
 }
