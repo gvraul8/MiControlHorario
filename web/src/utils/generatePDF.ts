@@ -248,16 +248,6 @@ function monthHasEntries(entries: WorkData, year: number, month: number): boolea
   );
 }
 
-const MONTH_NAMES_FILE = [
-  'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
-];
-
-export function monthlyReportFileBaseName(year: number, month: number): string {
-  const monthLabel = MONTH_NAMES_FILE[month] ?? String(month + 1);
-  return `mi-control-horario-${monthLabel}-${year}`;
-}
-
 export async function buildMonthlyReportHtml(
   entries: WorkData,
   year: number,

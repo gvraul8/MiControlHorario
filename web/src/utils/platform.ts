@@ -15,3 +15,8 @@ export function isIos(): boolean {
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
   );
 }
+
+export function isAndroid(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Android/i.test(navigator.userAgent);
+}

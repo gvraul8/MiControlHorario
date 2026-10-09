@@ -4,7 +4,7 @@ import { es } from 'date-fns/locale';
 import { useUserData } from '../hooks/useUserData';
 import { updateEntries, updateProfile } from '../services/userDataService';
 import ReportPreviewModal from '../components/ReportPreviewModal';
-import { buildMonthlyReportHtml, monthlyReportFileBaseName } from '../utils/generatePDF';
+import { buildMonthlyReportHtml } from '../utils/generatePDF';
 import { parseMonthKey } from '../utils/dateHelpers';
 import {
   DURATION_MINUTES,
@@ -178,10 +178,6 @@ export default function CalendarPage() {
   }
 
   const reportTitle = `Informe ${monthKey}`;
-  const reportFileBaseName = monthlyReportFileBaseName(
-    selectedMonth.getFullYear(),
-    selectedMonth.getMonth(),
-  );
 
   if (loading) {
     return <div className="page-loading">Cargando datos...</div>;
@@ -258,7 +254,6 @@ export default function CalendarPage() {
           title={reportTitle}
           html={reportHtml}
           loading={reportLoading}
-          fileBaseName={reportFileBaseName}
           onClose={closeReportPreview}
         />
       )}

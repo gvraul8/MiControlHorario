@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { isIos } from '../utils/platform';
+import { useCallback, useEffect, useRef } from 'react';
+import { isAndroid, isIos } from '../utils/platform';
 
 interface ReportPreviewModalProps {
   title: string;
   html: string | null;
   loading: boolean;
-  fileBaseName: string;
   onClose: () => void;
 }
 
@@ -13,12 +12,9 @@ export default function ReportPreviewModal({
   title,
   html,
   loading,
-  fileBaseName,
   onClose,
 }: ReportPreviewModalProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [canShareFile, setCanShareFile] = useState(false);
-  const [shareError, setShareError] = useState<string | null>(null);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -35,20 +31,6 @@ export default function ReportPreviewModal({
     };
   }, []);
 
-  useEffect(() => {
-    if (!html) {
-      setCanShareFile(false);
-      return;
-    }
-    setShareError(null);
-    const probe = new File([html], `${fileBaseName}.html`, { type: 'text/html;charset=utf-8' });
-    const canShare =
-      typeof navigator.share === 'function' &&
-      typeof navigator.canShare === 'function' &&
-      navigator.canShare({ files: [probe] });
-    setCanShareFile(canShare);
-  }, [html, fileBaseName]);
-
   const handlePrint = useCallback(() => {
     const frameWindow = iframeRef.current?.contentWindow;
     if (!frameWindow) return;
@@ -56,20 +38,7 @@ export default function ReportPreviewModal({
     frameWindow.print();
   }, []);
 
-  const handleShare = useCallback(async () => {
-    if (!html) return;
-    setShareError(null);
-    const file = new File([html], `${fileBaseName}.html`, { type: 'text/html;charset=utf-8' });
-    try {
-      await navigator.share({
-        files: [file],
-        title,
-      });
-    } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') return;
-      setShareError(err instanceof Error ? err.message : 'No se pudo compartir');
-    }
-  }, [html, fileBaseName, title]);
+  const saveButtonLabel = isAndroid() ? 'Guardar como PDF' : 'Guardar / Imprimir PDF';
 
   return (
     <div className="report-preview-overlay" role="dialog" aria-modal="true" aria-labelledby="report-preview-title">
@@ -77,16 +46,9 @@ export default function ReportPreviewModal({
         <h2 id="report-preview-title" className="report-preview-title">{title}</h2>
         <div className="report-preview-actions">
           {html && (
-            <>
-              <button type="button" className="btn btn-primary" onClick={handlePrint}>
-                Guardar / Imprimir PDF
-              </button>
-              {canShareFile && (
-                <button type="button" className="btn btn-secondary" onClick={handleShare}>
-                  Compartir
-                </button>
-              )}
-            </>
+            <button type="button" className="btn btn-primary" onClick={handlePrint}>
+              {saveButtonLabel}
+            </button>
           )}
           <button type="button" className="btn btn-ghost" onClick={onClose}>
             Cerrar
@@ -96,11 +58,16 @@ export default function ReportPreviewModal({
 
       {isIos() && html && (
         <p className="report-preview-hint">
-          En iPhone: pulsa «Guardar / Imprimir PDF» y elige «Guardar en Archivos» en el menú de impresión.
+          En iPhone: pulsa el botón de guardar y usa «Guardar en Archivos» o «Compartir» en el menú de impresión.
         </p>
       )}
-
-      {shareError && <p className="report-preview-share-error">{shareError}</p>}
+      {isAndroid() && html && (
+        <p className="report-preview-hint">
+          En Android: pulsa «Guardar como PDF», elige <strong>Guardar como PDF</strong> como impresora (arriba del
+          diálogo), confirma con el icono de descargar. El archivo irá a <strong>Descargas</strong>; para compartirlo,
+          ábrelo desde Archivos o Descargas y usa Compartir.
+        </p>
+      )}
 
       <div className="report-preview-body">
         {loading && (
